@@ -1,4 +1,4 @@
-# 0001: Bounded image enlargement
+# 0002: Bounded image enlargement
 
 Status: pending-verification
 

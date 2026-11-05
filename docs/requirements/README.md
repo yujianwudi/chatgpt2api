@@ -29,7 +29,10 @@ requirements may move to `archive/` after links and this index are updated.
 
 ## Active requirements
 
-[0001: Bounded image enlargement](0001-image-upscale.md) — pending-verification.
+- [`0001-image-gif-output.md`](0001-image-gif-output.md) — GIF output and
+  gpt-image-2.6 compatibility (`implementing`).
+- [`0002-image-upscale.md`](0002-image-upscale.md) — Bounded image enlargement
+  (`pending-verification`).
 
 PRDs are planning evidence, never proof that the product already behaves as
 described.

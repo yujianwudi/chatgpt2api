@@ -34,6 +34,18 @@ catalog; listing models does not query upstream or append upstream-only entries.
 list; Studio consumes the backend catalog. Explicit catalog configuration still
 takes precedence over the built-in list. No `exact` aliases are added.
 
+The persisted `gif_models` setting controls GIF eligibility per image model.
+It defaults to the three 2.6 aliases and is projected through `/api/settings`.
+Image requests carry optional `output_format`, `frame_count`, and
+`frame_duration_ms` values through the shared image execution request.
+`output_format` accepts `gif`, `png`, `jpg`/`jpeg`, and `webp`. GIF bytes bypass
+raster upscaling/re-encoding and are stored with `.gif` and `image/gif`; the
+other explicit formats are converted locally before storage. Existing `n` and
+multi-image behavior is unchanged.
+
+Image results carry the MIME type detected from the final encoded bytes so
+Chat data URLs match GIF, PNG, JPEG, or WebP output.
+
 The 2.5 and 2.6 identifiers use the existing `auto` upstream Web model slug. They are
 compatibility names and do not force a particular official API image engine or
 quality entitlement. Existing `gpt-image-2` and Codex routing and the default
