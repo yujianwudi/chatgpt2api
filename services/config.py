@@ -576,6 +576,12 @@ class ConfigStore:
         return value if value in {"sharp_lanczos3", "pillow_lanczos"} else "sharp_lanczos3"
 
     @property
+    def image_upscale_fit(self) -> str:
+        self.reload_if_changed()
+        value = str(self.data.get("image_upscale_fit") or "contain").strip().lower()
+        return value if value in {"contain", "cover"} else "contain"
+
+    @property
     def account_processing_concurrency(self) -> int:
         self.reload_if_changed()
         return normalize_integer_setting(
@@ -709,6 +715,7 @@ class ConfigStore:
             data["image_account_retry_enabled"] = self.image_account_retry_enabled
             data["image_upscale_enabled"] = self.image_upscale_enabled
             data["image_upscale_engine"] = self.image_upscale_engine
+            data["image_upscale_fit"] = self.image_upscale_fit
             data["image_max_account_attempts"] = self.image_max_account_attempts
             data["image_parallel_generation"] = self.image_parallel_generation
             data["image_remove_conversation_after_result"] = self.image_remove_conversation_after_result

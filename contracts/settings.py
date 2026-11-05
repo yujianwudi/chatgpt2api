@@ -9,6 +9,7 @@ from contracts.settings_specification import numeric_setting_spec
 
 LogLevel = Literal["debug", "info", "warning", "error"]
 ImageUpscaleEngine = Literal["sharp_lanczos3", "pillow_lanczos"]
+ImageUpscaleFit = Literal["contain", "cover"]
 ImageStorageMode = Literal["local", "webdav", "both"]
 ProxyRuntimeClearanceMode = Literal["none", "manual", "flaresolverr"]
 SettingsFieldSource = Literal["default", "configured", "environment"]
@@ -195,6 +196,7 @@ class _SettingsEditableFields(_StrictModel):
     image_account_retry_enabled: bool = True
     image_upscale_enabled: bool = False
     image_upscale_engine: ImageUpscaleEngine = "sharp_lanczos3"
+    image_upscale_fit: ImageUpscaleFit = "contain"
     image_max_account_attempts: int = _numeric_field("image_max_account_attempts")
     image_remove_conversation_after_result: bool = False
     image_settle_enabled: bool = True

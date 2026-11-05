@@ -79,6 +79,7 @@ export interface Settings {
   image_account_retry_enabled: boolean
   image_upscale_enabled: boolean
   image_upscale_engine: 'sharp_lanczos3' | 'pillow_lanczos'
+  image_upscale_fit: 'contain' | 'cover'
   image_max_account_attempts: number
   image_remove_conversation_after_result: boolean
   image_settle_enabled: boolean

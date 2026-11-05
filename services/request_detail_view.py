@@ -405,6 +405,37 @@ def request_image_resolutions(detail: Mapping[str, Any]) -> list[str]:
     ] if isinstance(result_images, list) else []
 
 
+def _image_upscale_summary(detail: Mapping[str, Any]) -> list[str]:
+    reasons = {
+        "already_sufficient": "原图已满足尺寸", "input_byte_limit": "原图文件过大",
+        "target_pixel_limit": "目标像素超过上限", "source_pixel_limit": "原图像素超过上限",
+        "invalid_source": "原图无法解析", "animated_source": "动画保持原样",
+        "deadline_exhausted": "请求剩余时间不足", "queue_busy": "放大队列繁忙",
+        "processing_timeout": "放大处理超时", "runtime_unavailable": "引擎不可用",
+        "engine_failed": "引擎处理失败", "invalid_output": "输出校验失败",
+        "output_byte_limit": "输出文件过大",
+    }
+    engines = {"sharp_lanczos3": "Sharp / Lanczos3", "pillow_lanczos": "Pillow / Lanczos"}
+    summaries = []
+    for image in detail.get("result_images") or []:
+        if not isinstance(image, Mapping) or not isinstance(image.get("upscale"), Mapping):
+            continue
+        report = image["upscale"]
+        if report.get("status") == "done":
+            source, output = report.get("source_size"), report.get("output_size")
+            geometry = "等比裁切" if report.get("fit") == "cover" else "等比留边"
+            text = f'{engines.get(report.get("engine"), "插值")} · {geometry}'
+            if isinstance(source, list) and len(source) == 2 and isinstance(output, list) and len(output) == 2:
+                text += f" · {source[0]}×{source[1]} → {output[0]}×{output[1]}"
+        else:
+            text = "保留原图 · " + reasons.get(report.get("reason"), "放大未完成")
+        text += f' · 排队 {_int(report.get("queue_ms"))} ms / 处理 {_int(report.get("processing_ms"))} ms'
+        if report.get("fallback_reason"):
+            text += " · Sharp 回退：" + reasons.get(report["fallback_reason"], "处理失败")
+        summaries.append(text)
+    return summaries
+
+
 def build_request_detail_core(
     summary: Mapping[str, Any],
     detail: Mapping[str, Any],
@@ -425,6 +456,7 @@ def build_request_detail_core(
         request_detail_field("模型", summary.get("model"), copyable=True),
         request_detail_field("请求尺寸", request_meta.get("size")),
         request_detail_field("实际分辨率", resolutions),
+        request_detail_field("图片放大", _image_upscale_summary(detail), wide=True),
         request_detail_field("请求质量", request_meta.get("quality")),
         request_detail_field("返回格式", request_meta.get("response_format")),
         request_detail_field("请求张数", request_meta.get("n")),

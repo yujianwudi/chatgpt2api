@@ -4,115 +4,158 @@ import io
 import re
 import shutil
 import subprocess
+import sys
 import threading
+import time
+import warnings
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 from services.config import config
-from utils.diagnostics import diagnostic_excerpt
-from utils.image_tokens import image_size_from_bytes
 from utils.log import logger
 
 
-_SHARP_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "image_upscale" / "upscale.mjs"
-_UPSCALE_LOCK = threading.Lock()
-_MAX_TARGET_DIMENSION = 8192
+_WORKERS = Path(__file__).resolve().parents[1] / "scripts" / "image_upscale"
+_UPSCALE_SLOTS = threading.BoundedSemaphore(2)
+_MAX_DIMENSION = 8192
+_MAX_PIXELS = 32 * 1024 * 1024
+_MAX_INPUT_BYTES = 32 * 1024 * 1024
+_MAX_OUTPUT_BYTES = 64 * 1024 * 1024
+_QUEUE_SECONDS = 5.0
+_TOTAL_SECONDS = 60.0
+_RETURN_RESERVE_SECONDS = 2.0
+
+
+class _UpscaleError(RuntimeError):
+    pass
 
 
 def _target_size(value: object) -> tuple[int, int] | None:
-    text = str(value or "").strip().lower()
-    if not text or text == "auto":
-        return None
-    match = re.fullmatch(r"(\d{2,5})\s*x\s*(\d{2,5})", text)
+    match = re.fullmatch(r"(\d{2,5})\s*x\s*(\d{2,5})", str(value or "").strip().lower())
     if not match:
         return None
-    width, height = int(match.group(1)), int(match.group(2))
-    if width > _MAX_TARGET_DIMENSION or height > _MAX_TARGET_DIMENSION:
+    width, height = int(match[1]), int(match[2])
+    if not (0 < width <= _MAX_DIMENSION and 0 < height <= _MAX_DIMENSION):
         return None
     return width, height
 
 
-def _pillow_lanczos(image_data: bytes, target: tuple[int, int]) -> bytes:
-    with Image.open(io.BytesIO(image_data)) as source:
-        image_format = str(source.format or "PNG").upper()
-        image = ImageOps.exif_transpose(source)
-        resized = image.resize(target, Image.Resampling.LANCZOS, reducing_gap=3.0)
-        output = io.BytesIO()
-        save_options: dict[str, object] = {}
-        if image_format in {"JPG", "JPEG"}:
-            image_format = "JPEG"
-            if resized.mode not in {"RGB", "L"}:
-                resized = resized.convert("RGB")
-            save_options.update(quality=95, subsampling=0)
-        elif image_format == "WEBP":
-            save_options.update(quality=95, method=4)
-        elif image_format not in {"PNG", "WEBP"}:
-            image_format = "PNG"
-        resized.save(output, format=image_format, **save_options)
-        return output.getvalue()
+def _inspect_image(data: bytes) -> tuple[tuple[int, int], bool]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+            if width * height > _MAX_PIXELS:
+                raise _UpscaleError("source_pixel_limit")
+            if image.getexif().get(274) in {5, 6, 7, 8}:
+                width, height = height, width
+            return (width, height), bool(getattr(image, "is_animated", False))
 
 
-def _sharp_lanczos3(image_data: bytes, target: tuple[int, int]) -> bytes:
-    node = shutil.which("node")
-    if not node or not _SHARP_SCRIPT.is_file():
-        raise RuntimeError("Sharp runtime is unavailable")
+def _render(engine: str, data: bytes, target: tuple[int, int], fit: str, deadline: float) -> bytes:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _UpscaleError("processing_timeout")
+    if engine == "sharp_lanczos3":
+        node = shutil.which("node")
+        if not node:
+            raise _UpscaleError("runtime_unavailable")
+        command = [node, str(_WORKERS / "upscale.mjs")]
+    else:
+        command = [sys.executable, str(_WORKERS / "pillow_upscale.py")]
     completed = subprocess.run(
-        [node, str(_SHARP_SCRIPT), str(target[0]), str(target[1])],
-        input=image_data,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=180,
+        command + [str(target[0]), str(target[1]), fit],
+        input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=remaining, check=False,
     )
-    if completed.returncode != 0 or not completed.stdout:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(detail or f"Sharp exited with code {completed.returncode}")
-    return completed.stdout
+    if completed.returncode or not completed.stdout:
+        raise _UpscaleError("engine_failed")
+    result = completed.stdout
+    if len(result) > _MAX_OUTPUT_BYTES:
+        raise _UpscaleError("output_byte_limit")
+    # Workers normalize orientation. Verify the encoded file without decoding
+    # the same output pixels a second time in the application process.
+    with Image.open(io.BytesIO(result)) as image:
+        if image.size != target or getattr(image, "is_animated", False):
+            raise _UpscaleError("invalid_output")
+        image.verify()
+    if time.monotonic() > deadline:
+        raise _UpscaleError("processing_timeout")
+    return result
 
 
-def upscale_image_if_needed(image_data: bytes, requested_size: object) -> bytes:
+def upscale_image_if_needed(
+    image_data: bytes,
+    requested_size: object,
+    *,
+    deadline_monotonic: float | None = None,
+    call_id: str | None = None,
+    report: dict[str, object] | None = None,
+) -> bytes:
+    """Optional best-effort interpolation; every unsuccessful path retains input."""
     if not image_data or not config.image_upscale_enabled:
         return image_data
     target = _target_size(requested_size)
-    source = image_size_from_bytes(image_data)
-    if not target or not source:
+    if not target:
         return image_data
-    if source[0] >= target[0] and source[1] >= target[1]:
-        return image_data
+    started = time.monotonic()
+    deadline = min(started + _TOTAL_SECONDS, deadline_monotonic - _RETURN_RESERVE_SECONDS) if deadline_monotonic else started + _TOTAL_SECONDS
+    engine, fit = config.image_upscale_engine, config.image_upscale_fit
+    info: dict[str, object] = {
+        "configured_engine": engine, "fit": fit,
+        "target_size": list(target), "source_bytes": len(image_data),
+        "queue_ms": 0, "processing_ms": 0,
+    }
 
-    engine = config.image_upscale_engine
-    with _UPSCALE_LOCK:
+    def finish(status: str, reason: str, result: bytes = image_data) -> bytes:
+        info.update(status=status, reason=reason, total_ms=round((time.monotonic() - started) * 1000), result_bytes=len(result))
+        if report is not None:
+            report.update(info)
+        log = logger.info if status == "done" or reason == "already_sufficient" else logger.warning
+        log({"event": "image_upscale_" + status, "call_id": call_id or "", **info})
+        return result
+
+    if len(image_data) > _MAX_INPUT_BYTES:
+        return finish("skipped", "input_byte_limit")
+    if target[0] * target[1] > _MAX_PIXELS:
+        return finish("skipped", "target_pixel_limit")
+    if time.monotonic() >= deadline:
+        return finish("skipped", "deadline_exhausted")
+    try:
+        source, animated = _inspect_image(image_data)
+    except Exception as exc:
+        return finish("skipped", str(exc) if isinstance(exc, _UpscaleError) else "invalid_source")
+    info["source_size"] = list(source)
+    info["output_size"] = list(source)
+    if animated:
+        return finish("skipped", "animated_source")
+    if source[0] >= target[0] and source[1] >= target[1]:
+        return finish("skipped", "already_sufficient")
+    queued = time.monotonic()
+    acquired = _UPSCALE_SLOTS.acquire(timeout=max(0.0, min(_QUEUE_SECONDS, deadline - queued)))
+    info["queue_ms"] = round((time.monotonic() - queued) * 1000)
+    if not acquired:
+        return finish("skipped", "deadline_exhausted" if time.monotonic() >= deadline else "queue_busy")
+    processing = time.monotonic()
+    try:
         try:
-            if engine == "sharp_lanczos3":
-                try:
-                    result = _sharp_lanczos3(image_data, target)
-                except Exception as exc:
-                    logger.warning({
-                        "event": "image_upscale_sharp_fallback",
-                        "source_size": list(source),
-                        "target_size": list(target),
-                        "error": diagnostic_excerpt(exc, 500),
-                    })
-                    result = _pillow_lanczos(image_data, target)
-                    engine = "pillow_lanczos"
-            else:
-                result = _pillow_lanczos(image_data, target)
-            logger.info({
-                "event": "image_upscale_done",
-                "engine": engine,
-                "source_size": list(source),
-                "target_size": list(target),
-                "source_bytes": len(image_data),
-                "result_bytes": len(result),
-            })
-            return result
+            result = _render(engine, image_data, target, fit, deadline)
         except Exception as exc:
-            logger.warning({
-                "event": "image_upscale_failed",
-                "engine": engine,
-                "source_size": list(source),
-                "target_size": list(target),
-                "error": diagnostic_excerpt(exc, 500),
-            })
-            return image_data
+            reason = "processing_timeout" if isinstance(exc, subprocess.TimeoutExpired) else str(exc) if isinstance(exc, _UpscaleError) else "engine_failed"
+            if engine != "sharp_lanczos3" or reason == "processing_timeout" or time.monotonic() >= deadline:
+                raise _UpscaleError(reason) from None
+            info["fallback_reason"] = reason
+            engine = "pillow_lanczos"
+            result = _render(engine, image_data, target, fit, deadline)
+        info.update(engine=engine, output_size=list(target))
+        status, reason = "done", "enlarged"
+    except Exception as exc:
+        result = image_data
+        info["engine"] = engine
+        status = "failed"
+        reason = "processing_timeout" if isinstance(exc, subprocess.TimeoutExpired) else str(exc) if isinstance(exc, _UpscaleError) else "engine_failed"
+    finally:
+        info["processing_ms"] = round((time.monotonic() - processing) * 1000)
+        _UPSCALE_SLOTS.release()
+    return finish(status, reason, result)

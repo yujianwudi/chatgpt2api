@@ -39,6 +39,28 @@ compatibility names and do not force a particular official API image engine or
 quality entitlement. Existing `gpt-image-2` and Codex routing and the default
 image model remain unchanged.
 
+### Optional image enlargement
+
+`services.image_upscale_service.upscale_image_if_needed` owns interpolation,
+geometry, admission, and fallback. `format_image_result` passes the request
+deadline and Call Record identifier before using the existing image-storage seam.
+SettingsManagementService projects `image_upscale_fit` (`contain` by default,
+or centered `cover`) alongside the existing enable and engine settings.
+
+Sharp and Pillow run as isolated child processes with at most two active workers
+per application process, a five-second queue wait, and a shared 60-second budget.
+The request deadline further caps that budget with a two-second return reserve.
+Inputs are limited to 32 MiB / 32 megapixels; targets to 8192 per dimension and
+32 megapixels. Encoded output is verified and capped at 64 MiB. Animated images
+and unsuccessful enlargements retain the original bytes. Sharp can fall back
+once to Pillow within the same budget. No AI model is involved.
+
+The service emits safe per-image diagnostics through private `_image_upscale`
+metadata. `image_output_metadata` carries this into Call Record `result_images`;
+`request_detail_view` owns its readable projection. The existing response filter
+removes private metadata for ordinary and streaming API responses. No account,
+asset, request, or Call Record lifecycle is duplicated by the renderer.
+
 ## Domain and persistence ownership
 
 | Domain | Owning Module | Stable Interface/output | Persistence |

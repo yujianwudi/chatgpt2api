@@ -82,6 +82,7 @@
           </div>
         </div>
       </div>
+      <p class="text-sm text-muted-foreground">使用 Lanczos 插值放大，不增加 AI 生成细节。比例不同时默认保留完整画面并留边，透明图使用透明边，其他图片使用白边。</p>
       <FormField label="放大引擎">
         <GroupedSelectMenu
           v-model="settings.image_upscale_engine"
@@ -91,6 +92,17 @@
           aria-label="图片放大引擎"
           block
         />
+      </FormField>
+      <FormField label="画面适配">
+        <GroupedSelectMenu
+          v-model="settings.image_upscale_fit"
+          :options="imageUpscaleFitOptions"
+          :disabled="!settings.image_upscale_enabled || fieldReadOnly('image_upscale_fit')"
+          selected-indicator="none"
+          aria-label="图片放大画面适配"
+          block
+        />
+        <p class="text-sm text-muted-foreground">居中裁切会移除边缘内容。繁忙、超时或放大失败时返回原图，原因可在调用日志详情查看。</p>
       </FormField>
     </FormSection>
 
@@ -144,6 +156,9 @@ defineEmits<{
 const fieldReadOnly = (path: string) => settingsFieldReadOnly(props.fields, path)
 const imageUpscaleEngineOptions = computed(() => (
   settingsFieldOptions(props.fields, 'image_upscale_engine', props.settings.image_upscale_engine)
+))
+const imageUpscaleFitOptions = computed(() => (
+  settingsFieldOptions(props.fields, 'image_upscale_fit', props.settings.image_upscale_fit)
 ))
 const logLevelOptions = computed(() => (
   settingsFieldOptions(props.fields, 'log_levels', props.settings.log_levels)

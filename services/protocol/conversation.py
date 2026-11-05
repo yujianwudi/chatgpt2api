@@ -490,6 +490,7 @@ def format_image_result(
     message: str = "",
     requested_size: str | None = None,
     deadline_monotonic: float | None = None,
+    call_id: str | None = None,
 ) -> dict[str, Any]:
     data: list[dict[str, Any]] = []
     image_urls: list[str] = []
@@ -499,7 +500,11 @@ def format_image_result(
             continue
         revised_prompt = str(item.get("revised_prompt") or prompt).strip() or prompt
         image_bytes = base64.b64decode(b64_json)
-        image_bytes = upscale_image_if_needed(image_bytes, requested_size)
+        upscale_report: dict[str, object] = {}
+        image_bytes = upscale_image_if_needed(
+            image_bytes, requested_size, deadline_monotonic=deadline_monotonic,
+            call_id=call_id, report=upscale_report,
+        )
         stored_url = save_image_bytes(
             image_bytes,
             base_url,
@@ -508,11 +513,14 @@ def format_image_result(
         if stored_url:
             image_urls.append(stored_url)
         asset: dict[str, Any] = {"revised_prompt": revised_prompt}
+        if upscale_report:
+            asset["_image_upscale"] = upscale_report
         if response_format == "b64_json":
             asset["b64_json"] = base64.b64encode(image_bytes).decode("ascii")
         else:
             asset["url"] = stored_url
-        dimensions = image_size_from_bytes(image_bytes)
+        measured_size = upscale_report.get("output_size")
+        dimensions = tuple(measured_size) if measured_size else image_size_from_bytes(image_bytes)
         if dimensions:
             asset["width"], asset["height"] = dimensions
         data.append(asset)
@@ -1623,6 +1631,7 @@ def _image_result_output_from_urls(
         int(time.time()),
         requested_size=request.size,
         deadline_monotonic=request.deadline_monotonic or None,
+        call_id=request.call_id,
     )
     data = formatted["data"]
     if not data:
@@ -2010,6 +2019,7 @@ def stream_codex_image_outputs(
         int(time.time()),
         requested_size=request.size,
         deadline_monotonic=request.deadline_monotonic or None,
+        call_id=request.call_id,
     )
     data = formatted["data"]
     if data:

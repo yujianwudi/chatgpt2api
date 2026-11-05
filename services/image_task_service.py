@@ -1143,6 +1143,7 @@ class ImageTaskService:
                 base_url,
                 int(time.time()),
                 requested_size=size,
+                call_id=_clean(request_payload.get("_call_id")),
             )
             data = formatted["data"]
             self._update_task(

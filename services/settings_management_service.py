@@ -62,6 +62,7 @@ _MANAGED_TOP_LEVEL_FIELDS = (
     "image_account_retry_enabled",
     "image_upscale_enabled",
     "image_upscale_engine",
+    "image_upscale_fit",
     "image_max_account_attempts",
     "image_remove_conversation_after_result",
     "image_settle_enabled",
@@ -251,6 +252,7 @@ _FIELD_SPECS: dict[str, dict[str, Any]] = {
     "image_account_retry_enabled": _field_metadata(True),
     "image_upscale_enabled": _field_metadata(False),
     "image_upscale_engine": _field_metadata("sharp_lanczos3", options=("sharp_lanczos3", "pillow_lanczos")),
+    "image_upscale_fit": _field_metadata("contain", options=("contain", "cover")),
     "image_max_account_attempts": _numeric_field_metadata("image_max_account_attempts"),
     "image_remove_conversation_after_result": _field_metadata(False),
     "image_settle_enabled": _field_metadata(True),
@@ -531,6 +533,7 @@ class SettingsManagementService:
                 "sharp_lanczos3",
                 {"sharp_lanczos3", "pillow_lanczos"},
             ),
+            image_upscale_fit=_enum(effective.get("image_upscale_fit"), "contain", {"contain", "cover"}),
             image_max_account_attempts=normalize_integer_setting(
                 "image_max_account_attempts",
                 effective.get("image_max_account_attempts"),

@@ -43,6 +43,10 @@ export const settingsTabs: SettingsSelectOption[] = [
 ]
 
 const settingsOptionLabels: Record<string, Record<string, string>> = {
+  image_upscale_fit: {
+    contain: '等比留边 · 保留完整画面',
+    cover: '等比裁切 · 居中铺满',
+  },
   image_upscale_engine: {
     sharp_lanczos3: 'Sharp / Lanczos3',
     pillow_lanczos: 'Pillow / Lanczos',

@@ -46,6 +46,7 @@ INTERNAL_RESPONSE_KEYS = {
     "_image_urls",
     "_image_attempts",
     "_image_metadata",
+    "_image_upscale",
 }
 LOG_IMAGE_URL_RE = re.compile(r"(?:!\[[^\]]*\]\()(?P<url>(?:https?://|/images/|/image-thumbnails/)[^\s)\"']+)\)")
 PERF_WAIT_WARN_MS = 1000
@@ -328,7 +329,7 @@ def image_result_metrics(value: object) -> dict[str, object]:
         "result_b64_count": 0,
         "result_b64_chars": 0,
     }
-    images: list[dict[str, int]] = []
+    images: list[dict[str, Any]] = []
 
     def visit(item: object) -> None:
         if isinstance(item, dict):
