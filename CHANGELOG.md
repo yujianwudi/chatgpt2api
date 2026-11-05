@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [新增] 图片接口和共享模型目录加入 `gpt-image-2.6`、`gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`，沿用现有 ChatGPT Web 的 `auto` 路由兼容方式；型号名称不保证指定上游图片引擎或账号权限。
+
 ## 3.2.3 - 2026-09-09
 
 + [新增] Python 图片接口和共享模型列表支持 `gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`，通过 ChatGPT Web 的 `auto` 路由兼容，不包含 `exact` 别名。
