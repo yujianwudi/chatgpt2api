@@ -46,6 +46,11 @@ multi-image behavior is unchanged.
 Image results carry the MIME type detected from the final encoded bytes so
 Chat data URLs match GIF, PNG, JPEG, or WebP output.
 
+The management gallery projects origin-relative `/images/` and
+`/image-thumbnails/` URLs through `gallery_row`. Console aliases therefore read
+assets through their own application origin, including WebDAV-backed assets.
+Published generation URLs still follow `ImageStorageService` public URL settings.
+
 The 2.5 and 2.6 identifiers use the existing `auto` upstream Web model slug. They are
 compatibility names and do not force a particular official API image engine or
 quality entitlement. Existing `gpt-image-2` and Codex routing and the default

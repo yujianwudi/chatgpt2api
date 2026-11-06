@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, Mapping
+from urllib.parse import quote
 
 from services.genbox_push_view import genbox_push_state
 from utils.timezone import beijing_now, parse_to_beijing_naive
@@ -64,10 +65,6 @@ def _expiry(item: Mapping[str, object], retention_hours: int) -> tuple[bool, str
     return remaining <= 0, expires.strftime("%Y-%m-%d %H:%M:%S"), max(0, remaining)
 
 
-def _thumbnail_url(base_url: str, path: str) -> str:
-    return f"{base_url.rstrip('/')}/image-thumbnails/{path}"
-
-
 def gallery_row(
     item: Mapping[str, object],
     *,
@@ -81,12 +78,15 @@ def gallery_row(
     expired, expires_at, expires_in_seconds = (
         _expiry(item, retention_hours) if local else (False, None, None)
     )
+    # The management UI can be served on an alias of the public API domain.
+    # Read assets through this application to avoid cross-site hotlink failures.
+    asset_path = quote(path, safe="/")
     return {
         "id": path,
         "path": path,
         "filename": filename,
-        "url": _text(item.get("url")) or f"{base_url.rstrip('/')}/images/{path}",
-        "thumbnail_url": _thumbnail_url(base_url, path),
+        "url": f"/images/{asset_path}",
+        "thumbnail_url": f"/image-thumbnails/{asset_path}",
         "size_bytes": _non_negative_int(item.get("size") or item.get("size_bytes")),
         "created_at": _text(item.get("created_at")),
         "date": _text(item.get("date")),
