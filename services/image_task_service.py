@@ -36,7 +36,7 @@ from services.log_service import (
     log_service,
 )
 from services.protocol import openai_v1_image_edit, openai_v1_image_generations
-from services.protocol.conversation import MISSING_IMAGE_OPTION
+from services.protocol.conversation import MISSING_IMAGE_OPTION, validate_image_parameters
 from services.realtime_monitor_service import realtime_monitor_service
 from services.storage.file_lock import interprocess_lock
 from utils.diagnostics import exception_diagnostic_fields
@@ -481,6 +481,12 @@ class ImageTaskService:
         payload: dict[str, Any],
         reservation: TaskReservation | None = None,
     ) -> dict[str, Any]:
+        try:
+            validate_image_parameters(payload)
+        except Exception:
+            if reservation is not None:
+                reservation.rollback()
+            raise
         task_id = _clean(client_task_id)
         if not task_id:
             if reservation is not None:
@@ -526,6 +532,7 @@ class ImageTaskService:
                 "size": _clean(payload.get("size")),
                 "quality": _clean(payload.get("quality"), "auto"),
                 "output_format": _clean(payload.get("output_format")),
+                **{key: payload[key] for key in ("frame_count", "frame_duration_ms") if key in payload},
                 "base_url": _clean(payload.get("base_url")),
                 "created_at": now,
                 "updated_at": now,
@@ -1166,8 +1173,12 @@ class ImageTaskService:
                 requested_size=size,
                 call_id=_clean(request_payload.get("_call_id")),
                 output_format=output_format,
+                frame_count=request_payload.get("frame_count", MISSING_IMAGE_OPTION),
+                frame_duration_ms=request_payload.get("frame_duration_ms", MISSING_IMAGE_OPTION),
             )
             data = formatted["data"]
+            if output_format in {"gif", "svg"} and len(data) != _image_count(request_payload.get("n")):
+                raise ImageGenerationError("Recovered output count does not match the original request", failure=image_failure("image_output_invalid"))
             self._update_task(
                 key,
                 status=TASK_STATUS_SUCCESS,

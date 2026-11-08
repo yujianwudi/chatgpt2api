@@ -195,6 +195,12 @@ curl http://localhost:3000/v1/images/generations \
 
 实际可用模型以上游账号和 `/v1/models` 返回值为准。
 
+GIF／SVG 由设置中的逐模型开关控制。GIF 不支持流式返回；`frame_count` 为 2–60 的整数，`frame_duration_ms` 为 10–60000 毫秒且须为 10 的倍数。可传 `size` 指定最终画布（GIF 单边最多 2048）；服务端等比缩放并补边，保留动画和循环。实际帧数不符时返回 `image_output_invalid`，不会复制帧凑数或内部换号重生成；分镜 PNG 不计入 `data`。GIF／SVG 成品数量不足也不会作为完整成功返回。
+
+SVG 仅支持无参考图的生成请求，使用文字模型生成并校验静态 XML，再适配目标画布。`data[].processing` 说明是否经过画布或时长适配。`quality` 仅作为生成提示，`complexity` 暂不支持，传入会明确报错。2.5／2.6 系列名称使用 Web `auto` 路由，不能据此确认官方同名引擎。`usage.source=local_estimate` 表示兼容服务估算，不是官方账单用量。
+
+接入 NewAPI 等网关时，应将 `image_output_invalid` 设为不自动重试，并验证失败预扣退回；服务端的 `x-should-retry:false` 提示不能替代网关配置。
+
 ## 关键配置
 
 | 配置                             | 默认值       | 用途                                                                                     |

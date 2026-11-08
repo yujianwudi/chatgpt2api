@@ -78,6 +78,10 @@ def image_output_metadata(items: object) -> list[dict[str, Any]]:
         report = item.get("_image_upscale")
         if isinstance(report, dict):
             entry["upscale"] = dict(report)
+        if isinstance(item.get("processing"), dict):
+            entry["processing"] = dict(item["processing"])
+        if item.get("mime_type"):
+            entry["mime_type"] = item["mime_type"]
         metadata.append(entry)
     return metadata
 
@@ -340,11 +344,13 @@ def image_usage(
     input_image_tokens: int = 0,
     output_tokens: int = 0,
 ) -> dict[str, Any]:
-    return token_usage(
+    usage = token_usage(
         input_text_tokens=input_text_tokens,
         input_image_tokens=input_image_tokens,
         output_image_tokens=output_tokens,
     )
+    usage["source"] = "local_estimate"
+    return usage
 
 
 def chat_usage_from_image_usage(usage: dict[str, Any]) -> dict[str, Any]:
@@ -354,6 +360,7 @@ def chat_usage_from_image_usage(usage: dict[str, Any]) -> dict[str, Any]:
     output_details = usage.get("output_tokens_details") if isinstance(usage.get("output_tokens_details"), dict) else {}
     return {
         "prompt_tokens": input_tokens,
+        "source": str(usage.get("source") or "local_estimate"),
         "completion_tokens": output_tokens,
         "total_tokens": input_tokens + output_tokens,
         "prompt_tokens_details": {

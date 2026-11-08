@@ -167,7 +167,7 @@
                           type="text"
                           inputmode="numeric"
                           autocomplete="off"
-                          placeholder="可选"
+                          placeholder="2–60，可选"
                           :disabled="isSending"
                         />
                       </label>
@@ -178,11 +178,12 @@
                           type="text"
                           inputmode="numeric"
                           autocomplete="off"
-                          placeholder="可选"
+                          placeholder="10的倍数，可选"
                           :disabled="isSending"
                         />
                       </label>
                     </div>
+                    <p class="studio-size-label">画布与间隔由服务端适配，帧数不补帧；质量仅作为生成提示。</p>
                   </div>
                   <div class="studio-size-section">
                     <div class="studio-size-label">质量</div>

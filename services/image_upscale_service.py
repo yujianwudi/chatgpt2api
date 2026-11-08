@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -26,9 +27,52 @@ _QUEUE_SECONDS = 5.0
 _TOTAL_SECONDS = 60.0
 _RETURN_RESERVE_SECONDS = 2.0
 
+MAX_GIF_FRAMES = 60
+MAX_GIF_DIMENSION = 2048
+MAX_GIF_TOTAL_PIXELS = 32 * 1024 * 1024
+
 
 class _UpscaleError(RuntimeError):
     pass
+
+
+def normalize_gif_output(
+    data: bytes, target: tuple[int, int] | None, frame_count: int | None,
+    duration_ms: int | None, *, deadline_monotonic: float | None = None,
+) -> tuple[bytes, dict[str, object]]:
+    """Validate/adapt animation in a bounded worker; never substitute a still image."""
+    if len(data) > _MAX_INPUT_BYTES:
+        raise ValueError("gif_input_byte_limit")
+    deadline = min(time.monotonic() + _TOTAL_SECONDS, deadline_monotonic - _RETURN_RESERVE_SECONDS) if deadline_monotonic else time.monotonic() + _TOTAL_SECONDS
+    acquired = _UPSCALE_SLOTS.acquire(timeout=max(0, min(_QUEUE_SECONDS, deadline - time.monotonic())))
+    if not acquired:
+        raise ValueError("gif_processing_busy")
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("gif_processing_timeout")
+        result = subprocess.run(
+            [sys.executable, str(_WORKERS / "pillow_upscale.py"),
+             str(target[0] if target else 0), str(target[1] if target else 0),
+             "contain", "gif", str(frame_count or 0), str(duration_ms or 0)],
+            input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=remaining,
+            check=False,
+        )
+        if result.returncode or not result.stdout:
+            try:
+                reason = str(json.loads(result.stderr).get("error") or "invalid_animation")[:200]
+            except (ValueError, TypeError, AttributeError):
+                reason = "invalid_animation"
+            raise ValueError(reason)
+        if len(result.stdout) > _MAX_OUTPUT_BYTES or time.monotonic() > deadline:
+            raise ValueError("gif_processing_limit")
+        report = json.loads(result.stderr)
+        with Image.open(io.BytesIO(result.stdout)) as image:
+            if image.format != "GIF" or list(image.size) != report["output_size"] or image.n_frames != report["frame_count"]:
+                raise ValueError("gif_worker_output_invalid")
+        return result.stdout, report
+    finally:
+        _UPSCALE_SLOTS.release()
 
 
 def _target_size(value: object) -> tuple[int, int] | None:

@@ -30,7 +30,7 @@ from utils.diagnostics import (
     exception_diagnostic_fields,
     scrub_diagnostic_value,
 )
-from utils.helper import anthropic_sse_stream, image_sse_stream, sse_json_stream
+from utils.helper import anthropic_sse_stream, image_sse_stream, is_codex_image_model, sse_json_stream
 from utils.image_tokens import image_output_metadata
 from utils.log import logger
 from utils.timezone import beijing_from_timestamp, beijing_now_str
@@ -299,11 +299,16 @@ IMAGE_TRACE_REQUEST_KEYS = {
     "response_format",
     "stream",
     "partial_images",
+    "frame_count",
+    "frame_duration_ms",
 }
 
 
 def image_request_metadata(body: dict[str, Any]) -> dict[str, object]:
-    metadata: dict[str, object] = {}
+    metadata: dict[str, object] = {
+        "quality_control": "structured" if is_codex_image_model(body.get("model")) else "prompt_hint",
+        "usage_source": "local_estimate",
+    }
     source = body
     for tool in body.get("tools") or []:
         if isinstance(tool, dict) and tool.get("type") == "image_generation":
@@ -446,13 +451,15 @@ def _image_error_payload(exc: Exception) -> dict[str, object]:
             "type": failure.error_type,
             "param": getattr(exc, "param", None),
             "code": failure.code,
+            "retryable": failure.retryable,
         }
     }
 
 
 def _image_error_response(exc: Exception) -> JSONResponse:
     failure = _final_image_failure(exc)
-    return openai_error_response(_image_error_payload(exc), failure.status_code)
+    headers = {"x-should-retry": "false"} if failure.code == "image_output_invalid" else None
+    return openai_error_response(_image_error_payload(exc), failure.status_code, headers=headers)
 
 
 def _protocol_error_response(exc: Exception, status_code: int, sse: str) -> JSONResponse:

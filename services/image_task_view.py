@@ -32,7 +32,7 @@ _TERMINAL_STAGE_LABELS = {
     "text_review": "文本",
 }
 
-_ASSET_TEXT_FIELDS = ("url", "path", "b64_json", "revised_prompt")
+_ASSET_TEXT_FIELDS = ("url", "path", "b64_json", "revised_prompt", "mime_type")
 _ASSET_DIMENSION_FIELDS = ("width", "height")
 _ASSET_PAYLOAD_FIELDS = ("url", "b64_json")
 
@@ -82,6 +82,8 @@ def _asset(raw: object) -> dict[str, Any] | None:
         return None
     for field in _ASSET_DIMENSION_FIELDS:
         result[field] = _asset_dimension(raw.get(field))
+    if isinstance(raw.get("processing"), dict):
+        result["processing"] = dict(raw["processing"])
     return result
 
 

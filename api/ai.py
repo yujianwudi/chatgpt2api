@@ -25,20 +25,21 @@ from services.protocol import (
     openai_v1_response,
     openai_search,
 )
-from services.protocol.conversation import validate_image_output_request
+from services.protocol.conversation import validate_image_output_request, validate_image_parameters
 from utils.helper import has_response_image_generation_tool, is_image_chat_request
 
 
 class ImageGenerationRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     model: str = "gpt-image-2"
-    n: int = Field(default=1, ge=1, le=4)
+    n: int = Field(default=1, ge=1, le=4, strict=True)
     size: str | None = None
     quality: str = "auto"
     response_format: str = "b64_json"
     output_format: str | None = None
     frame_count: object = None
     frame_duration_ms: object = None
+    complexity: object = None
     history_disabled: bool = True
     stream: bool | None = None
 
@@ -146,6 +147,7 @@ def create_router() -> APIRouter:
             if field not in body.model_fields_set:
                 payload.pop(field, None)
         payload["base_url"] = resolve_image_base_url(request)
+        validate_image_parameters(payload)
         validate_image_output_request(body.model, body.output_format, stream=bool(body.stream))
         call = LoggedCall(identity, "/v1/images/generations", body.model, "文生图", request_text=body.prompt)
         attach_trace_headers(call, request)
@@ -162,6 +164,7 @@ def create_router() -> APIRouter:
         payload, image_sources, mask_sources = await parse_image_edit_request(request)
         prompt = str(payload["prompt"])
         model = str(payload["model"])
+        validate_image_parameters(payload)
         validate_image_output_request(
             model,
             payload.get("output_format"),

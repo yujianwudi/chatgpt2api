@@ -23,6 +23,8 @@ class ImageTaskAsset(BaseModel):
     path: str = ""
     b64_json: str = ""
     revised_prompt: str = ""
+    mime_type: str = ""
+    processing: dict[str, object] = Field(default_factory=dict)
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
 

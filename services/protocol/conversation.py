@@ -42,7 +42,10 @@ from services.image_failure import (
     terminal_assistant_text,
 )
 from services.image_storage_service import image_media_type, image_storage_service
-from services.image_upscale_service import upscale_image_if_needed
+from services.image_upscale_service import (
+    MAX_GIF_DIMENSION, MAX_GIF_FRAMES, MAX_GIF_TOTAL_PIXELS,
+    normalize_gif_output, upscale_image_if_needed,
+)
 from services.openai_backend_api import OpenAIBackendAPI
 from services.proxy_service import ImageEgressDeadlineError, proxy_settings
 from services.realtime_monitor_service import realtime_monitor_service
@@ -57,7 +60,7 @@ from utils.helper import (
 from utils.image_tokens import count_image_content_tokens, image_output_metadata, image_size_from_bytes
 from utils.log import logger
 from utils.diagnostics import diagnostic_excerpt
-from utils.svg import svg_dimensions
+from utils.svg import fit_svg_canvas, svg_dimensions
 
 
 MISSING_IMAGE_OPTION = object()
@@ -118,6 +121,58 @@ def validate_image_output_request(
 
 
 validate_gif_request = validate_image_output_request
+
+
+def _image_parameter_error(name: str, message: str) -> None:
+    raise HTTPException(status_code=400, detail={"error": {
+        "message": message, "type": "invalid_request_error",
+        "code": "unsupported_image_parameter", "param": name,
+    }})
+
+
+def requested_image_canvas(value: object) -> tuple[int, int] | None:
+    if value is None or str(value).strip().lower() in {"", "auto"}:
+        return None
+    match = re.fullmatch(r"(\d{1,5})x(\d{1,5})", str(value).strip().lower())
+    if not match:
+        _image_parameter_error("size", "size must be auto or WIDTHxHEIGHT")
+    width, height = int(match[1]), int(match[2])
+    if not (1 <= width <= 8192 and 1 <= height <= 8192 and width * height <= 32 * 1024 * 1024):
+        _image_parameter_error("size", "size exceeds the supported canvas limits")
+    return width, height
+
+
+def validate_image_parameters(body: dict[str, Any]) -> None:
+    """Normalize image options once, before any account selection or task admission."""
+    if body.get("complexity") is not None:
+        _image_parameter_error("complexity", "complexity is not supported by this compatibility backend")
+    fmt = normalize_image_output_format(body.get("output_format"))
+    target = requested_image_canvas(body.get("size"))
+    quality = str(body.get("quality") or "auto").strip().lower()
+    if quality not in {"auto", "low", "medium", "high", "standard", "hd"}:
+        _image_parameter_error("quality", "unsupported quality; this backend uses quality as a prompt hint")
+    body["quality"] = quality
+    n = 1 if body.get("n") is None else body["n"]
+    if type(n) is not int or not 1 <= n <= 4:
+        _image_parameter_error("n", "n must be an integer between 1 and 4")
+    body["n"] = n
+    for key, low, high in (("frame_count", 2, MAX_GIF_FRAMES), ("frame_duration_ms", 10, 60000)):
+        if key not in body or body[key] is MISSING_IMAGE_OPTION:
+            continue
+        if fmt != "gif":
+            _image_parameter_error(key, f"{key} requires output_format=gif")
+        value = body[key]
+        if isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
+            value = int(value.strip())
+        if type(value) is not int or not low <= value <= high:
+            _image_parameter_error(key, f"{key} must be an integer between {low} and {high}")
+        if key == "frame_duration_ms" and value % 10:
+            _image_parameter_error(key, "GIF frame_duration_ms must be a multiple of 10")
+        body[key] = value
+    if fmt == "gif" and target:
+        frames = body.get("frame_count") if type(body.get("frame_count")) is int else 2
+        if max(target) > MAX_GIF_DIMENSION or target[0] * target[1] * frames > MAX_GIF_TOTAL_PIXELS:
+            _image_parameter_error("size", "GIF canvas or total frame pixels exceed processing limits")
 
 
 def _monitor_image_stage(request: "ConversationRequest", event: str, **data: Any) -> None:
@@ -612,10 +667,27 @@ def format_image_result(
     deadline_monotonic: float | None = None,
     call_id: str | None = None,
     output_format: object = None,
+    frame_count: object = MISSING_IMAGE_OPTION,
+    frame_duration_ms: object = MISSING_IMAGE_OPTION,
 ) -> dict[str, Any]:
     data: list[dict[str, Any]] = []
     image_urls: list[str] = []
     normalized_output_format = normalize_image_output_format(output_format)
+    if normalized_output_format == "gif":
+        # One upstream generation slot must yield one animation, not its storyboard.
+        animations = []
+        try:
+            for item in items:
+                value = str(item.get("b64_json") or "")
+                if len(value) > 45 * 1024 * 1024:
+                    raise ValueError("image byte limit")
+                if base64.b64decode(value, validate=True).startswith((b"GIF87a", b"GIF89a")):
+                    animations.append(item)
+        except (ValueError, TypeError) as exc:
+            raise ImageGenerationError("Invalid upstream image encoding", failure=image_failure("image_output_invalid")) from exc
+        items = animations
+        if len(items) != 1:
+            raise ImageGenerationError(f"Expected one GIF animation, received {len(items)}", failure=image_failure("image_output_invalid"))
     for item in items:
         b64_json = str(item.get("b64_json") or "").strip()
         if not b64_json:
@@ -623,11 +695,28 @@ def format_image_result(
         revised_prompt = str(item.get("revised_prompt") or prompt).strip() or prompt
         image_bytes = base64.b64decode(b64_json)
         upscale_report: dict[str, object] = {}
+        processing: dict[str, object] = {}
         dimensions = None
         if normalized_output_format == "svg":
             dimensions = svg_dimensions(image_bytes)
             if dimensions is None:
-                raise ImageDownloadError("upstream did not return a valid SVG document")
+                raise ImageGenerationError("upstream did not return a valid SVG document", failure=image_failure("image_output_invalid"))
+            target = requested_image_canvas(requested_size)
+            source_size = dimensions
+            image_bytes = fit_svg_canvas(image_bytes, target)
+            dimensions = svg_dimensions(image_bytes)
+            if source_size != dimensions:
+                processing = {"operation": "svg_canvas_fit", "source_size": list(source_size), "output_size": list(dimensions), "reencoded": True}
+        elif normalized_output_format == "gif":
+            try:
+                image_bytes, processing = normalize_gif_output(
+                    image_bytes, requested_image_canvas(requested_size),
+                    None if frame_count is MISSING_IMAGE_OPTION else frame_count,
+                    None if frame_duration_ms is MISSING_IMAGE_OPTION else frame_duration_ms,
+                    deadline_monotonic=deadline_monotonic,
+                )
+            except Exception as exc:
+                raise ImageGenerationError("GIF failed animation, frame count, timing or canvas validation", failure=image_failure("image_output_invalid"), raw_error=str(exc)) from exc
         elif normalized_output_format:
             image_bytes = convert_image_bytes(image_bytes, normalized_output_format)
         if normalized_output_format not in {"gif", "svg"}:
@@ -645,6 +734,9 @@ def format_image_result(
         if stored_url:
             image_urls.append(stored_url)
         asset: dict[str, Any] = {"revised_prompt": revised_prompt, "mime_type": mime_type}
+        if processing:
+            asset["processing"] = processing
+            logger.info({"event": "image_output_processed", "call_id": call_id or "", **processing})
         if upscale_report:
             asset["_image_upscale"] = upscale_report
         if response_format == "b64_json":
@@ -1326,11 +1418,10 @@ def collect_text(backend: OpenAIBackendAPI, request: ConversationRequest) -> str
     return "".join(stream_text_deltas(backend, request))
 
 
-def append_svg_prompt(prompt: str) -> str:
+def append_svg_prompt(prompt: str, size: str | None = None, quality: str = "auto") -> str:
     """Build the private text-model instruction without mutating the caller prompt."""
     return (
-        f"{str(prompt or '').rstrip()}\n\n"
-        "生成格式为 svg。\n"
+        f"{build_image_prompt(prompt, size, quality, 'svg')}\n"
         "请在回复正文中直接包含完整的 SVG XML（从 <svg 开始到 </svg> 结束），"
         "不要只返回 sandbox:/mnt/data 下载链接、下载按钮或文字说明；禁止脚本、外部资源和嵌入式位图，"
         "必须包含有效的 width/height 或 viewBox。"
@@ -1360,11 +1451,14 @@ def _generate_single_svg(request: "ConversationRequest", index: int, total: int)
     started = time.perf_counter()
     try:
         backend = text_backend()
+        logger.info({"event": "image_route_selected", "call_id": request.call_id,
+                     "requested_model": request.model, "upstream_model": "auto",
+                     "generation_backend": "text_svg", "quality_control": "prompt_hint", "index": index})
         response = collect_text(
             backend,
             ConversationRequest(
                 model="auto",
-                prompt=append_svg_prompt(request.prompt),
+                prompt=append_svg_prompt(request.prompt, request.size, request.quality),
                 deadline_monotonic=request.deadline_monotonic,
             ),
         )
@@ -1372,7 +1466,7 @@ def _generate_single_svg(request: "ConversationRequest", index: int, total: int)
         if document is None:
             raise ImageGenerationError(
                 "upstream did not return a valid SVG document",
-                failure=image_failure("upstream_error", raw_detail=response[:2000]),
+                failure=image_failure("image_output_invalid"),
             )
         formatted = format_image_result(
             [{"b64_json": base64.b64encode(document).decode("ascii")}],
@@ -1380,6 +1474,8 @@ def _generate_single_svg(request: "ConversationRequest", index: int, total: int)
             request.response_format,
             request.base_url,
             int(time.time()),
+            requested_size=request.size,
+            call_id=request.call_id,
             deadline_monotonic=request.deadline_monotonic or None,
             output_format="svg",
         )
@@ -1865,6 +1961,8 @@ def _image_result_output_from_urls(
         deadline_monotonic=request.deadline_monotonic or None,
         call_id=request.call_id,
         output_format=request.output_format,
+        frame_count=request.frame_count,
+        frame_duration_ms=request.frame_duration_ms,
     )
     data = formatted["data"]
     if not data:
@@ -2610,6 +2708,10 @@ def _generate_single_image(
                 reserve_image_egress=fallback_profile is None,
                 deadline_monotonic=request.deadline_monotonic or None,
             )
+            logger.info({"event": "image_route_selected", "call_id": request.call_id,
+                         "requested_model": request.model,
+                         "upstream_model": backend._image_model_slug(request.model),
+                         "quality_control": "structured" if is_codex_image_model(request.model) else "prompt_hint", "index": index})
             if request.trace_image_perf:
                 egress_data = _backend_egress_data(backend)
                 if using_fallback_profile:
@@ -2924,7 +3026,7 @@ def _generate_single_image(
                 False,
                 failure=failure,
                 error=image_error,
-                quota_consumed=(failure.code == "image_download_failed"),
+                quota_consumed=(failure.code in {"image_download_failed", "image_output_invalid"}),
             )
             attach_attempts(image_error)
             if retry_with_different_account(failure, image_error):
@@ -2982,6 +3084,28 @@ def _select_image_pool_error(errors: dict[int, Exception]) -> Exception | None:
 
 
 def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[ImageOutput]:
+    options = {"size": request.size, "quality": request.quality, "n": request.n,
+               "output_format": request.output_format}
+    for key in ("frame_count", "frame_duration_ms"):
+        if getattr(request, key) is not MISSING_IMAGE_OPTION:
+            options[key] = getattr(request, key)
+    validate_image_parameters(options)
+    for key in ("quality", "frame_count", "frame_duration_ms"):
+        if key in options:
+            setattr(request, key, options[key])
+    outputs = _stream_image_outputs_with_pool(request)
+    if normalize_image_output_format(request.output_format) not in {"gif", "svg"}:
+        yield from outputs
+        return
+    # Raw formats are non-streaming. Check all slots before exposing partial success.
+    collected = list(outputs)
+    count = sum(len(output.data) for output in collected if output.kind == "result")
+    if count != request.n:
+        raise ImageGenerationError(f"Expected {request.n} completed outputs, received {count}", failure=image_failure("image_output_invalid"))
+    yield from collected
+
+
+def _stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[ImageOutput]:
     """并行生成多张图片，每张图片使用独立线程和账号，互不阻塞。"""
     normalized_output_format = normalize_image_output_format(request.output_format)
     validate_image_output_request(

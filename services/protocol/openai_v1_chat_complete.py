@@ -22,6 +22,7 @@ from services.protocol.conversation import (
     stream_text_deltas,
     text_backend,
     validate_image_output_request,
+    validate_image_parameters,
 )
 from services.protocol.reasoning import thinking_effort_from_body
 from services.protocol.web_search_tool import (
@@ -180,6 +181,7 @@ def chat_messages_from_body(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def chat_image_args(body: dict[str, Any]) -> tuple[str, str, int, list[tuple[bytes, str, str]], str | None, object, object, object]:
+    validate_image_parameters(body)
     model = str(body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
     prompt = extract_chat_prompt(body)
     if not prompt:
@@ -263,6 +265,8 @@ def image_chat_response(body: dict[str, Any]) -> dict[str, Any]:
         prompt=prompt,
         model=model,
         n=n,
+        size=body.get("size"),
+        quality=str(body.get("quality") or "auto"),
         response_format="b64_json",
         output_format=output_format,
         frame_count=frame_count,
@@ -277,7 +281,7 @@ def image_chat_response(body: dict[str, Any]) -> dict[str, Any]:
     usage = image_usage(
         input_text_tokens=count_text_tokens(prompt, model),
         input_image_tokens=count_image_inputs_tokens(images, model),
-        output_tokens=count_image_output_items_tokens(result.get("data")),
+        output_tokens=count_image_output_items_tokens(result.get("data"), body.get("size"), str(body.get("quality") or "auto")),
     )
     response["usage"] = chat_usage_from_image_usage(usage)
     _with_log_metadata(
@@ -297,6 +301,8 @@ def image_chat_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         prompt=prompt,
         model=model,
         n=n,
+        size=body.get("size"),
+        quality=str(body.get("quality") or "auto"),
         response_format="b64_json",
         output_format=output_format,
         frame_count=frame_count,

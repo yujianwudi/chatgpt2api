@@ -39,7 +39,7 @@ class ImageFailure:
 
     @property
     def switch_account(self) -> bool:
-        return self.outcome == "failure"
+        return self.outcome == "failure" and self.code != "image_output_invalid"
 
     @property
     def account_failure(self) -> bool:
@@ -135,6 +135,9 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "request", None, False, 400, "invalid_request_error",
     ),
     "image_download_failed": FailurePolicy(
+        "delivery", None, False, 502, "server_error",
+    ),
+    "image_output_invalid": FailurePolicy(
         "delivery", None, False, 502, "server_error",
     ),
     "task_interrupted": FailurePolicy(
@@ -330,6 +333,8 @@ def public_image_error_message(
     failure: ImageFailure,
     error: BaseException | None = None,
 ) -> str:
+    if failure.code == "image_output_invalid":
+        return "Generated output did not meet the requested image contract; no automatic regeneration was performed."
     if failure.code == "image_poll_timeout":
         return IMAGE_TIMEOUT_PUBLIC_MESSAGE
     if failure.code in {"image_stream_interrupted", "image_stream_timeout"}:

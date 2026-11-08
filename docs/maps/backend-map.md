@@ -39,13 +39,37 @@ model. It defaults to the three 2.6 aliases and is projected through
 `/api/settings`.
 Image requests carry optional `output_format`, `frame_count`, and
 `frame_duration_ms` values through the shared image execution request.
-`output_format` accepts `gif`, `png`, `jpg`/`jpeg`, `webp`, and `svg`. GIF bytes
-bypass raster upscaling/re-encoding and are stored with `.gif` and `image/gif`;
+`validate_image_parameters` normalizes all image entry points before upstream
+work or task admission. `complexity` is rejected; quality is a prompt hint.
+GIF counts are integers 2..60, durations 10..60000 milliseconds in multiples
+of ten. Numeric form strings are normalized, other invalid values rejected.
+The canvas parser bounds dimensions and area; GIF canvases are at most 2048
+per side with 32 megapixels of aggregate decoded frame area.
+
+`output_format` accepts `gif`, `png`, `jpg`/`jpeg`, `webp`, and `svg`.
+The shared formatter selects one GIF animation per generation slot and excludes
+storyboard PNGs. `normalize_gif_output` uses the existing bounded Pillow worker
+and worker semaphore to validate motion, exact requested frame count and timing.
+It fits the canvas without cropping and applies requested frame durations,
+without manufacturing frames. It preserves encoded bytes when already compliant.
+Changed output discloses canvas/timing processing in public `processing` metadata.
+The wrapper checks complete GIF/SVG cardinality before yielding any result;
+non-raw raster partial-result behavior is unchanged.
+
 SVG generation uses the text account pool for generation requests only;
-reference images and streaming are rejected. The result is validated as bounded
-static XML and stored with its original bytes, `.svg`, and `image/svg+xml`. The
-other explicit formats are converted locally before storage. Existing `n` and
-multi-image behavior is unchanged.
+reference images and streaming are rejected. Size/quality enter its prompt.
+The result is validated as bounded static XML; `utils.svg` resolves physical
+units at 96 CSS pixels per inch and can fit a requested pixel canvas, preserving
+the viewBox content. Stored types remain `.svg` / `image/svg+xml`.
+Other explicit formats continue using the raster conversion/enlargement path.
+
+`image_output_invalid` is a terminal delivery failure: it does not switch
+accounts or trigger internal regeneration. Direct HTTP errors carry
+`x-should-retry:false`. A gateway must separately exclude this error from retry
+and verify reservation refunds; a header alone does not configure NewAPI.
+Image usage is labeled `source: local_estimate` and uses delivered assets only.
+Frame parameters and processing facts enter Call Records; route selection
+events log the requested alias and actual upstream slug with the call ID.
 
 Image results carry the MIME type detected from the final encoded bytes so
 Chat data URLs match GIF, PNG, JPEG, or WebP output.

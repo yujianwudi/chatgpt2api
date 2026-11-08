@@ -18,6 +18,7 @@ from services.protocol.conversation import (
     normalize_messages,
     stream_image_outputs_with_pool,
     validate_image_output_request,
+    validate_image_parameters,
     stream_text_deltas,
     text_backend,
 )
@@ -478,9 +479,11 @@ def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         images = None
     input_image_tokens = count_image_content_tokens(_input_image_parts(body.get("input")), model)
     tool = response_image_tool(body)
+    image_options = {**body, **tool}
+    validate_image_parameters(image_options)
     output_format = tool.get("output_format")
-    frame_count = tool.get("frame_count", MISSING_IMAGE_OPTION)
-    frame_duration_ms = tool.get("frame_duration_ms", MISSING_IMAGE_OPTION)
+    frame_count = image_options.get("frame_count", MISSING_IMAGE_OPTION)
+    frame_duration_ms = image_options.get("frame_duration_ms", MISSING_IMAGE_OPTION)
     validate_image_output_request(
         model,
         output_format,

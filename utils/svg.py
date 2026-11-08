@@ -53,14 +53,12 @@ def _safe_style(value: str) -> bool:
 
 def _svg_length(value: str) -> float:
     text = str(value or "").strip().lower()
-    for suffix in ("px", "pt", "mm", "cm"):
-        if text.endswith(suffix):
-            text = text[: -len(suffix)].strip()
-            break
-    try:
-        return float(text)
-    except ValueError:
+    match = re.fullmatch(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)\s*(px|pt|pc|mm|cm|in|q)?", text)
+    if not match:
         return 0.0
+    scale = {None: 1, "px": 1, "pt": 96 / 72, "pc": 16, "mm": 96 / 25.4,
+             "cm": 96 / 2.54, "in": 96, "q": 96 / 101.6}[match[2]]
+    return float(match[1]) * scale
 
 
 def _root_dimensions(attrs: dict[str, str]) -> tuple[float, float]:
@@ -165,3 +163,25 @@ def svg_dimensions(data: bytes) -> tuple[int, int] | None:
     ):
         return None
     return int(width + 0.999999), int(height + 0.999999)
+
+
+def fit_svg_canvas(data: bytes, target: tuple[int, int] | None) -> bytes:
+    """Fit a validated drawing into a pixel canvas without cropping its viewBox."""
+    source = svg_dimensions(data)
+    if source is None:
+        raise ValueError("invalid SVG document")
+    if target is None:
+        return data
+    root = ET.fromstring(data)
+    if source == target and root.get("width") in {str(target[0]), f"{target[0]}px"} and root.get("height") in {str(target[1]), f"{target[1]}px"}:
+        return data
+    if "viewBox" not in root.attrib:
+        width, height = _root_dimensions(dict(root.attrib))
+        root.set("viewBox", f"0 0 {width:g} {height:g}")
+    root.set("width", str(target[0]))
+    root.set("height", str(target[1]))
+    root.set("preserveAspectRatio", "xMidYMid meet")
+    result = ET.tostring(root, encoding="utf-8")
+    if svg_dimensions(result) != target:
+        raise ValueError("invalid fitted SVG canvas")
+    return result
