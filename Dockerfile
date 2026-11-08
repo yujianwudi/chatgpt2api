@@ -71,4 +71,4 @@ WORKDIR /app
 EXPOSE 80
 
 ENTRYPOINT ["chatgpt2api-entrypoint"]
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]
+CMD ["uv", "run", "--frozen", "--no-dev", "--no-sync", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]
