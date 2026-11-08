@@ -55,6 +55,7 @@ from utils.helper import (
     extract_image_from_message_content,
     is_codex_image_model,
     is_supported_image_model,
+    parse_image_count,
     split_image_model,
 )
 from utils.image_tokens import count_image_content_tokens, image_output_metadata, image_size_from_bytes
@@ -153,9 +154,12 @@ def validate_image_parameters(body: dict[str, Any]) -> None:
         _image_parameter_error("quality", "unsupported quality; this backend uses quality as a prompt hint")
     body["quality"] = quality
     n = 1 if body.get("n") is None else body["n"]
-    if type(n) is not int or not 1 <= n <= 4:
-        _image_parameter_error("n", "n must be an integer between 1 and 4")
-    body["n"] = n
+    if type(n) is not int:
+        _image_parameter_error("n", "n must be an integer")
+    try:
+        body["n"] = parse_image_count(n)
+    except HTTPException as exc:
+        _image_parameter_error("n", str(exc.detail.get("error", "invalid n")))
     for key, low, high in (("frame_count", 2, MAX_GIF_FRAMES), ("frame_duration_ms", 10, 60000)):
         if key not in body or body[key] is MISSING_IMAGE_OPTION:
             continue

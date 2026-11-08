@@ -37,6 +37,11 @@ takes precedence over the built-in list. No `exact` aliases are added.
 The persisted `gif_models` setting controls GIF and SVG eligibility per image
 model. It defaults to the three 2.6 aliases and is projected through
 `/api/settings`.
+The persisted `image_max_n` setting defaults to four and has a minimum of one.
+`utils.helper.parse_image_count` owns the configured request limit; image APIs
+and Studio task admission share it, while the model catalog projects the limit
+to Studio. JSON counts remain strict integers. Historical tasks retain their
+original count when the configured limit is later lowered.
 Image requests carry optional `output_format`, `frame_count`, and
 `frame_duration_ms` values through the shared image execution request.
 `validate_image_parameters` normalizes all image entry points before upstream
