@@ -33,6 +33,8 @@ requirements may move to `archive/` after links and this index are updated.
   gpt-image-2.6 compatibility (`pending-verification`).
 - [`0002-image-upscale.md`](0002-image-upscale.md) — Bounded image enlargement
   (`pending-verification`).
+- [`0003-account-memory-controls.md`](0003-account-memory-controls.md) — memory
+  state filtering and single/batch controls (`pending-verification`).
 
 PRDs are planning evidence, never proof that the product already behaves as
 described.
