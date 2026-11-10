@@ -82,6 +82,7 @@ def create_router() -> APIRouter:
                 n=n,
                 size=body.size,
                 quality=body.quality,
+                complexity=body.complexity,
                 output_format=body.output_format,
                 frame_count=(
                     body.frame_count
@@ -134,6 +135,7 @@ def create_router() -> APIRouter:
                 n=payload.get("n", 1),
                 size=payload["size"],
                 quality=payload["quality"],
+                complexity=payload.get("complexity"),
                 output_format=payload.get("output_format"),
                 frame_count=payload.get("frame_count", MISSING_IMAGE_OPTION),
                 frame_duration_ms=payload.get("frame_duration_ms", MISSING_IMAGE_OPTION),

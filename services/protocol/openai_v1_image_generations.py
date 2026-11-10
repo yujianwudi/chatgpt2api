@@ -36,6 +36,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         n=n,
         size=size,
         quality=quality,
+        complexity=body.get("complexity"),
         response_format=response_format,
         output_format=output_format,
         frame_count=frame_count,

@@ -1205,6 +1205,7 @@ class OpenAIBackendAPI:
             size: str | None = None,
             quality: str = "auto",
             output_format: object = None,
+            complexity: str | None = None,
     ) -> Iterator[Dict[str, Any]]:
         if not self.access_token:
             raise RuntimeError("access_token is required for codex image endpoints")
@@ -1233,6 +1234,8 @@ class OpenAIBackendAPI:
             "tool_choice": {"type": "image_generation"},
             "stream": True,
         }
+        if complexity not in (None, "auto"):
+            payload["tools"][0]["complexity"] = complexity
         request = urllib.request.Request(
             self.base_url + path,
             json.dumps(payload).encode(),
@@ -1402,7 +1405,9 @@ class OpenAIBackendAPI:
         }
 
     def _start_image_generation(self, prompt: str, requirements: ChatRequirements, conduit_token: str, model: str,
-                                references: Optional[list[Dict[str, Any]]] = None) -> requests.Response:
+                                references: Optional[list[Dict[str, Any]]] = None, *,
+                                quality: str | None = None,
+                                complexity: str | None = None) -> requests.Response:
         """启动图片生成或编辑的 SSE 请求。"""
         references = references or []
         parts = [{
@@ -1463,6 +1468,11 @@ class OpenAIBackendAPI:
             "paragen_cot_summary_display_override": "allow",
             "force_parallel_switch": "auto",
         }
+        # Preserve requested controls. Acceptance by the Web endpoint does not verify their effect.
+        if quality is not None:
+            payload["quality"] = quality
+        if complexity not in (None, "auto"):
+            payload["complexity"] = complexity
         path = "/backend-api/f/conversation"
         timeout_secs = config.image_stream_timeout_secs
         # Keep the transport/curl deadline slightly above the logical SSE
@@ -3699,10 +3709,15 @@ class OpenAIBackendAPI:
             images: Optional[list[str]] = None,
             system_hints: Optional[list[str]] = None,
             thinking_effort: str = "",
+            *,
+            quality: str | None = None,
+            complexity: str | None = None,
     ) -> Iterator[str]:
         system_hints = system_hints or []
         if "picture_v2" in system_hints:
-            yield from self._stream_picture_conversation(prompt, model, images or [])
+            yield from self._stream_picture_conversation(
+                prompt, model, images or [], quality=quality, complexity=complexity,
+            )
             return
 
         normalized = messages or [{"role": "user", "content": prompt}]
@@ -3736,6 +3751,9 @@ class OpenAIBackendAPI:
             prompt: str,
             model: str,
             images: list[str],
+            *,
+            quality: str | None = None,
+            complexity: str | None = None,
     ) -> Iterator[str]:
         if not self.access_token:
             raise RuntimeError("access_token is required for image endpoints")
@@ -3748,7 +3766,10 @@ class OpenAIBackendAPI:
         self._report_progress("preparing_conversation")
         conduit_token = self._prepare_image_conversation(prompt, requirements, model)
         self._report_progress("starting_generation")
-        response = self._start_image_generation(prompt, requirements, conduit_token, model, references)
+        response = self._start_image_generation(
+            prompt, requirements, conduit_token, model, references,
+            quality=quality, complexity=complexity,
+        )
         self._report_progress("generating")
         try:
             for payload in self._iter_timed_sse_payloads(

@@ -4,7 +4,7 @@ Status: pending-verification
 
 - Owner: shared image execution and image storage modules
 - Created: 2026-11-05
-- Updated: 2026-11-08
+- Updated: 2026-11-11
 - Related ADRs: 0002, 0003
 
 ## Problem and user outcome
@@ -36,8 +36,12 @@ this work does not claim a verified official engine or quality entitlement.
 
 ## Contract and failure behavior
 
-- complexity is unsupported and must not be silently ignored. quality remains
-  a validated visual prompt preference, not a structured upstream quality control.
+- The subsequent image-option forwarding change accepts quality xhigh/max and
+  complexity low/medium/high through the existing image execution Interface. Web
+  JSON preserves the values without prompt mapping; auto complexity is omitted.
+  Acceptance and image delivery do not verify native upstream effects. Call
+  Records retain requested controls as passthrough_unverified. SVG continues using
+  quality prompt hints and explicitly rejects xhigh/max and non-auto complexity.
 - GIF frame_count accepts integers 2..60; numeric form strings are normalized.
   frame_duration_ms accepts 10..60000 in multiples of ten. Booleans, objects,
   null frame options and frame options for non-GIF formats are rejected before work.

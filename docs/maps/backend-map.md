@@ -45,7 +45,14 @@ original count when the configured limit is later lowered.
 Image requests carry optional `output_format`, `frame_count`, and
 `frame_duration_ms` values through the shared image execution request.
 `validate_image_parameters` normalizes all image entry points before upstream
-work or task admission. `complexity` is rejected; quality is a prompt hint.
+work or task admission. Quality accepts auto/low/medium/high/xhigh/max and the
+existing standard/hd aliases. Complexity accepts low/medium/high; auto or an
+omitted value is not sent upstream. The generation, edit, Chat, Responses image
+tool and asynchronous task paths preserve these fields, including task recovery.
+The Web adapter places the original fields in the conversation JSON instead of
+rewriting them into prompt text. This proves forwarding, not that the upstream
+image tool applies the controls; Call Records label them `passthrough_unverified`.
+The Codex adapter puts complexity in its existing image_generation tool object.
 GIF counts are integers 2..60, durations 10..60000 milliseconds in multiples
 of ten. Numeric form strings are normalized, other invalid values rejected.
 The canvas parser bounds dimensions and area; GIF canvases are at most 2048
@@ -63,6 +70,8 @@ non-raw raster partial-result behavior is unchanged.
 
 SVG generation uses the text account pool for generation requests only;
 reference images and streaming are rejected. Size/quality enter its prompt.
+Explicit non-auto complexity and xhigh/max are rejected on this text-authoring
+route because it cannot forward native image controls.
 The result is validated as bounded static XML; `utils.svg` resolves physical
 units at 96 CSS pixels per inch and can fit a requested pixel canvas, preserving
 the viewBox content. Stored types remain `.svg` / `image/svg+xml`.

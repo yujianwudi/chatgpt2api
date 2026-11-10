@@ -145,13 +145,22 @@ def requested_image_canvas(value: object) -> tuple[int, int] | None:
 
 def validate_image_parameters(body: dict[str, Any]) -> None:
     """Normalize image options once, before any account selection or task admission."""
-    if body.get("complexity") is not None:
-        _image_parameter_error("complexity", "complexity is not supported by this compatibility backend")
+    complexity = body.get("complexity")
+    if complexity is not None:
+        if not isinstance(complexity, str):
+            _image_parameter_error("complexity", "complexity must be auto, low, medium or high")
+        complexity = complexity.strip().lower()
+        if complexity not in {"auto", "low", "medium", "high"}:
+            _image_parameter_error("complexity", "complexity must be auto, low, medium or high")
+        body["complexity"] = complexity
     fmt = normalize_image_output_format(body.get("output_format"))
     target = requested_image_canvas(body.get("size"))
     quality = str(body.get("quality") or "auto").strip().lower()
-    if quality not in {"auto", "low", "medium", "high", "standard", "hd"}:
-        _image_parameter_error("quality", "unsupported quality; this backend uses quality as a prompt hint")
+    if quality not in {"auto", "low", "medium", "high", "xhigh", "max", "standard", "hd"}:
+        _image_parameter_error("quality", "quality must be auto, low, medium, high, xhigh, max, standard or hd")
+    if fmt == "svg" and (complexity not in (None, "auto") or quality in {"xhigh", "max"}):
+        parameter = "complexity" if complexity not in (None, "auto") else "quality"
+        _image_parameter_error(parameter, "this backend SVG authoring route cannot forward native image controls")
     body["quality"] = quality
     n = 1 if body.get("n") is None else body["n"]
     if type(n) is not int:
@@ -781,6 +790,7 @@ class ConversationRequest:
     trace_image_perf: bool = False
     monitor_attempt: int = 0
     deadline_monotonic: float = 0.0
+    complexity: str | None = None
 
 
 @dataclass
@@ -1299,6 +1309,7 @@ def conversation_events(
     frame_count: object = MISSING_IMAGE_OPTION,
     frame_duration_ms: object = MISSING_IMAGE_OPTION,
     thinking_effort: str = "",
+    complexity: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []))
     image_model = is_supported_image_model(model)
@@ -1308,7 +1319,7 @@ def conversation_events(
         build_image_prompt(
             prompt,
             size,
-            quality,
+            "",  # Quality is forwarded as a field, not rewritten into the prompt.
             output_format,
             frame_count,
             frame_duration_ms,
@@ -1321,6 +1332,7 @@ def conversation_events(
         images=images if image_model else None,
         system_hints=["picture_v2"] if image_model else None,
         thinking_effort=thinking_effort if not image_model else "",
+        **({"quality": quality, "complexity": complexity} if image_model else {}),
     )
     yield from iter_conversation_payloads(
         payloads,
@@ -2004,6 +2016,7 @@ def stream_image_outputs(
                 images=request.images or [],
                 size=request.size,
                 quality=request.quality,
+                complexity=request.complexity,
                 output_format=request.output_format,
                 frame_count=request.frame_count,
                 frame_duration_ms=request.frame_duration_ms,
@@ -2305,6 +2318,7 @@ def stream_codex_image_outputs(
         images=request.images or [],
         size=request.size,
         quality=request.quality,
+        complexity=request.complexity,
         output_format=request.output_format,
     ))
     images = _codex_response_images(events)

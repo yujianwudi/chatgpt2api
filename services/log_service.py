@@ -295,6 +295,7 @@ IMAGE_TRACE_REQUEST_KEYS = {
     "n",
     "size",
     "quality",
+    "complexity",
     "output_format",
     "response_format",
     "stream",
@@ -306,7 +307,7 @@ IMAGE_TRACE_REQUEST_KEYS = {
 
 def image_request_metadata(body: dict[str, Any]) -> dict[str, object]:
     metadata: dict[str, object] = {
-        "quality_control": "structured" if is_codex_image_model(body.get("model")) else "prompt_hint",
+        "quality_control": "structured" if is_codex_image_model(body.get("model")) else "passthrough_unverified",
         "usage_source": "local_estimate",
     }
     source = body
@@ -322,6 +323,8 @@ def image_request_metadata(body: dict[str, Any]) -> dict[str, object]:
             continue
         if isinstance(value, (str, int, float, bool)):
             metadata[key] = value
+    if source.get("complexity") not in (None, "", "auto"):
+        metadata["complexity_control"] = "passthrough_unverified"
     images = body.get("images")
     if isinstance(images, list) and images:
         metadata["input_image_count"] = len(images)
