@@ -41,6 +41,11 @@
       />
     </section>
 
+    <section v-if="accountMaintenanceMessage" aria-label="账号维护" role="status" class="rounded-md border border-border px-4 py-3 text-sm">
+      <p>{{ accountMaintenanceMessage }}</p>
+      <p class="mt-1 text-xs text-muted-foreground">{{ accountMaintenanceLabel }}</p>
+    </section>
+
     <section
       aria-label="调用概览"
       class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6"
@@ -244,6 +249,8 @@ const {
   dashboardDataReady,
   dashboardLoadError,
   dashboardDataWarning,
+  accountMaintenanceMessage,
+  accountMaintenanceLabel,
   dashboardVersion,
   retryDashboard,
   modelTimeRange,

@@ -60,6 +60,11 @@ cleanup setting; disabled, pending-auth and recoverable accounts are retained.
 Automatic deletion compares account snapshots across storage revision retries,
 so a newer credential or status prevents deletion. Unknown expiry alone is not
 a deletion reason. Rate-limited deletion remains an explicit existing setting.
+Dashboard account categories use the same credential-aware projection as the
+Accounts page. It reports usable, recoverable, unavailable and unqueried counts,
+plus warnings for credentials expiring within 24 hours without a usable refresh
+token. The latest maintenance counters and completion time are process-local;
+a restart explicitly resets that summary rather than displaying an old result.
 
 ## Upstream Account memory maintenance
 

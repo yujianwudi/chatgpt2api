@@ -157,6 +157,7 @@ class AccountService:
         self._oauth_refresh_flights: dict[_CredentialGeneration, Future[str]] = {}
         self._memory_active_account_ids: set[str] = set()
         self._maintenance_lock = Lock()
+        self._maintenance_summary: dict[str, Any] = {}
         self._image_slot_condition = Condition(self._lock)
         self._account_snapshot_refresh_lock = Lock()
         self._index = 0
@@ -2500,6 +2501,9 @@ class AccountService:
                         summary["errors"].append("quota_accounts")
             memory = stage("memory", self.maintain_pending_account_memory)
             summary["memory_confirmed"] = int((memory or {}).get("confirmed") or 0)
+            summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+            with self._lock:
+                self._maintenance_summary = deepcopy(summary)
             return summary
         finally:
             self._maintenance_lock.release()
@@ -5403,15 +5407,50 @@ class AccountService:
         return items
 
     def get_stats(self) -> dict:
+        from services.account_view import account_status_category
+
         self._refresh_accounts_snapshot_if_stale()
         with self._lock:
             items = list(self._accounts.values())
+            maintenance = deepcopy(self._maintenance_summary)
         total = len(items)
-        active = sum(1 for a in items if a.get("status") == "正常")
-        limited = sum(1 for a in items if a.get("status") == "限流")
-        abnormal = sum(1 for a in items if a.get("status") == "异常")
-        disabled = sum(1 for a in items if a.get("status") == "禁用")
-        normal_items = [a for a in items if a.get("status") == "正常"]
+        categories = [account_status_category(a) for a in items]
+        active = categories.count("normal")
+        limited = categories.count("limited")
+        abnormal = categories.count("abnormal")
+        disabled = categories.count("disabled")
+        normal_items = [a for a, category in zip(items, categories) if category == "normal"]
+        usable = recoverable = unavailable = expiring = unsynced = 0
+        for account in items:
+            availability = project_upstream_credential_availability(
+                str(account.get("access_token") or ""), str(account.get("refresh_token") or ""),
+                access_confirmed_invalid=account.get("last_remote_check_result") == "invalid",
+                refresh_confirmed_invalid=bool(account.get("refresh_token_invalid_at")),
+            )
+            if account.get("status") == "禁用":
+                continue
+            if availability.status == "recoverable":
+                recoverable += 1
+            elif availability.status == "unavailable":
+                unavailable += 1
+            elif self._is_account_selectable(account, allow_limited=False):
+                usable += 1
+                if not account.get("last_remote_checked_at"):
+                    unsynced += 1
+                if availability.access.status == "expiring" and availability.refresh_status != "valid":
+                    expiring += 1
+        message = f"可直接使用 {usable} 个，可续期 {recoverable} 个，不可恢复 {unavailable} 个，待同步额度 {unsynced} 个。"
+        if expiring:
+            message += f" {expiring} 个账号将在 24 小时内到期且无法自动续期，请及时补充凭据。"
+        if maintenance:
+            maintenance_label = (
+                f"最近维护：同步 {maintenance.get('synced', 0)} 个，续期 {maintenance.get('renewed', 0)} 个，"
+                f"清理 {maintenance.get('removed', 0)} 个，记忆确认 {maintenance.get('memory_confirmed', 0)} 个。"
+            )
+            if maintenance.get("errors"):
+                maintenance_label += " 部分阶段失败，将按维护周期重试。"
+        else:
+            maintenance_label = "本次服务启动后尚无维护完成记录。"
         total_quota = sum(max(0, int(a.get("quota") or 0)) for a in normal_items)
         unlimited = sum(1 for a in normal_items if self._is_unlimited_image_quota_account(a))
         unknown_quota = sum(
@@ -5442,6 +5481,14 @@ class AccountService:
             "total_success": total_success,
             "total_fail": total_fail,
             "by_type": by_type,
+            "ready_accounts": usable,
+            "recoverable_accounts": recoverable,
+            "unavailable_accounts": unavailable,
+            "unsynced_accounts": unsynced,
+            "expiring_without_refresh": expiring,
+            "maintenance_message": message,
+            "maintenance_label": maintenance_label,
+            "maintenance_last_run": maintenance.get("finished_at"),
         }
 
     def account_health(self) -> dict:

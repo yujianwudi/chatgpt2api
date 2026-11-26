@@ -315,6 +315,14 @@ export interface DashboardOperations {
 }
 
 export interface DashboardAccountStats {
+  ready_accounts: number
+  recoverable_accounts: number
+  unavailable_accounts: number
+  unsynced_accounts: number
+  expiring_without_refresh: number
+  maintenance_message: string
+  maintenance_label: string
+  maintenance_last_run: string | null
   total: number
   cumulative_total: number
   active: number

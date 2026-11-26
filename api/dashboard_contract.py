@@ -67,6 +67,14 @@ class DashboardAccountView(BaseModel):
     total_fail: int = 0
     by_type: dict[str, int] = Field(default_factory=dict)
     healthy: bool = False
+    ready_accounts: int = 0
+    recoverable_accounts: int = 0
+    unavailable_accounts: int = 0
+    unsynced_accounts: int = 0
+    expiring_without_refresh: int = 0
+    maintenance_message: str = ""
+    maintenance_label: str = ""
+    maintenance_last_run: str | None = None
 
 
 class DashboardTotalsView(BaseModel):

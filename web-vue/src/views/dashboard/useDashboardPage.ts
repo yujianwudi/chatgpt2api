@@ -151,6 +151,8 @@ export function useDashboardPage() {
   })
   const dashboardLoadError = ref('')
   const dashboardDataWarning = ref('')
+  const accountMaintenanceMessage = ref('')
+  const accountMaintenanceLabel = ref('')
 
   const defaultTimeRange = readDashboardDefaultTimeRange()
   const modelTimeRange = ref<DashboardTimeRange>(defaultTimeRange)
@@ -708,6 +710,8 @@ export function useDashboardPage() {
   }
 
   function applyAccountStats(accounts: DashboardAccountStats) {
+    accountMaintenanceMessage.value = accounts.maintenance_message || ''
+    accountMaintenanceLabel.value = accounts.maintenance_label || ''
     stats.value[0].value = formatStatNumber(accounts.total)
     stats.value[1].value = formatStatNumber(accounts.active)
     stats.value[2].value = formatStatNumber(accounts.limited)
@@ -1043,6 +1047,8 @@ export function useDashboardPage() {
     dashboardLoadError,
     retryDashboard,
     dashboardDataWarning,
+    accountMaintenanceMessage,
+    accountMaintenanceLabel,
     dashboardVersion,
     modelTimeRange,
     trendTimeRange,
