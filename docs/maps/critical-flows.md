@@ -63,6 +63,17 @@ a deletion reason. Rate-limited deletion remains an explicit existing setting.
 
 ## Upstream Account memory maintenance
 
+The `account_import_memory_policy` setting defaults to `preserve`; `refresh`
+and `disable` queue work only for newly added accounts, including remote import
+adapters. Full-backup restoration keeps its archived lifecycle unchanged.
+Lifecycle maintenance processes at most 20 due accounts per cycle and verifies
+pending operations using reads. Pending intent and a 60-second execution lease
+are stored in account metadata before changing upstream settings. After restart,
+expired execution leases allow verification; clear commands are never replayed.
+Policy failures wait at least one configured maintenance interval before retry.
+Automatic work is limited to three rounds per account; an explicit memory action
+resets that budget. Only account metadata is persisted, never memory contents.
+
 The Accounts runtime sends an explicit or scoped selection and an enable,
 disable, refresh or clear action to `POST /api/accounts/memory`. The route resolves
 a fixed list of management IDs and schedules `AccountService.manage_account_memory` through

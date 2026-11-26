@@ -663,6 +663,11 @@ class ConfigStore:
         )
 
     @property
+    def account_import_memory_policy(self) -> str:
+        value = str(self.data.get("account_import_memory_policy") or "preserve").strip()
+        return value if value in {"preserve", "refresh", "disable"} else "preserve"
+
+    @property
     def auto_remove_invalid_accounts(self) -> bool:
         value = self.data.get("auto_remove_invalid_accounts", True)
         if isinstance(value, str):
@@ -751,6 +756,7 @@ class ConfigStore:
             data["image_parallel_generation"] = self.image_parallel_generation
             data["image_remove_conversation_after_result"] = self.image_remove_conversation_after_result
             data["auto_remove_invalid_accounts"] = self.auto_remove_invalid_accounts
+            data["account_import_memory_policy"] = self.account_import_memory_policy
             data["auto_remove_rate_limited_accounts"] = self.auto_remove_rate_limited_accounts
             data["log_levels"] = self.log_levels
             data["sensitive_words"] = self.sensitive_words

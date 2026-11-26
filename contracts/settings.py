@@ -205,6 +205,7 @@ class _SettingsEditableFields(_StrictModel):
     gif_models: list[str] = Field(default_factory=list)
     auto_remove_invalid_accounts: bool = True
     auto_remove_rate_limited_accounts: bool = False
+    account_import_memory_policy: Literal["preserve", "refresh", "disable"] = "preserve"
     log_levels: list[LogLevel] = Field(default_factory=list)
     global_system_prompt: str = ""
     sensitive_words: list[str] = Field(default_factory=list)

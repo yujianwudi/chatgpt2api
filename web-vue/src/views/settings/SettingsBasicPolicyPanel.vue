@@ -30,6 +30,17 @@
           </div>
         </div>
       </div>
+      <FormField label="新导入账号的记忆策略">
+        <GroupedSelectMenu
+          v-model="settings.account_import_memory_policy"
+          :options="memoryPolicyOptions"
+          :disabled="fieldReadOnly('account_import_memory_policy')"
+          aria-label="新导入账号的记忆策略"
+          selected-indicator="none"
+          block
+        />
+        <p class="mt-1 text-xs text-muted-foreground">后台分批处理新账号；关闭记忆不会清空已有内容。清空历史记忆需单独操作。</p>
+      </FormField>
       <FormField label="最大尝试账号数">
         <template #label-extra>
           <HelpTip text="包含第一次使用的账号。默认 4，最小 2，不限制可填写的最大值。" />
@@ -172,6 +183,9 @@ defineEmits<{
 }>()
 
 const fieldReadOnly = (path: string) => settingsFieldReadOnly(props.fields, path)
+const memoryPolicyOptions = computed(() => (
+  settingsFieldOptions(props.fields, 'account_import_memory_policy', props.settings.account_import_memory_policy)
+))
 const imageUpscaleEngineOptions = computed(() => (
   settingsFieldOptions(props.fields, 'image_upscale_engine', props.settings.image_upscale_engine)
 ))

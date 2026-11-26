@@ -2498,6 +2498,8 @@ class AccountService:
                     summary["synced"] = int(result.get("synced") or 0)
                     if result.get("errors"):
                         summary["errors"].append("quota_accounts")
+            memory = stage("memory", self.maintain_pending_account_memory)
+            summary["memory_confirmed"] = int((memory or {}).get("confirmed") or 0)
             return summary
         finally:
             self._maintenance_lock.release()
@@ -2915,6 +2917,8 @@ class AccountService:
                     added += 1
                     outcomes_by_token[access_token] = "added"
                     current = {"created_at": self._now()}
+                    if not preserve_lifecycle and config.account_import_memory_policy != "preserve":
+                        current["memory_import_policy"] = config.account_import_memory_policy
                 else:
                     skipped += 1
                     outcomes_by_token[access_token] = "skipped"
@@ -4874,6 +4878,45 @@ class AccountService:
             event="renew_expiring_access_tokens",
         )
 
+    def maintain_pending_account_memory(self) -> dict[str, Any]:
+        """Apply opted-in import policies and verify accepted operations, boundedly."""
+        self._refresh_accounts_snapshot_if_stale()
+        now = datetime.now(timezone.utc)
+        groups: dict[bool | None, list[str]] = {None: [], False: []}
+        with self._lock:
+            due = []
+            for token, account in self._accounts.items():
+                policy = account.get("memory_import_policy")
+                pending = account.get("memory_operation_status") == "pending" or account.get("memory_clear_status") == "pending"
+                if not pending and policy not in {"refresh", "disable"}:
+                    continue
+                if int(account.get("memory_maintenance_attempts") or 0) >= 3:
+                    continue
+                if not self._is_account_selectable(account, allow_limited=True):
+                    continue
+                if float(account.get("memory_operation_active_until") or 0) > now.timestamp():
+                    continue
+                attempted = self._parse_time(account.get("memory_maintenance_attempt_at"))
+                if attempted and (now - attempted).total_seconds() < max(60, config.refresh_account_interval_minute * 60):
+                    continue
+                due.append((attempted or datetime.min.replace(tzinfo=timezone.utc), token, account["management_id"], None if pending or policy == "refresh" else False))
+            for _, token, account_id, target in sorted(due)[:20]:
+                self._accounts[token] = {
+                    **self._accounts[token], "memory_maintenance_attempt_at": now.isoformat(),
+                    "memory_maintenance_attempts": int(self._accounts[token].get("memory_maintenance_attempts") or 0) + 1,
+                }
+                groups[target].append(account_id)
+            if any(groups.values()):
+                self._save_accounts()
+        result = {"confirmed": 0, "pending": 0, "failed": 0}
+        for target, ids in groups.items():
+            if ids:
+                batch = self.manage_account_memory(ids, enabled=target, automatic=True)
+                result["confirmed"] += int(batch.get("confirmed") or 0)
+                result["pending"] += int(batch.get("pending") or 0)
+                result["failed"] += len(batch.get("errors") or [])
+        return result
+
     def manage_account_memory(
         self,
         account_ids: list[str],
@@ -4882,6 +4925,7 @@ class AccountService:
         *,
         finalize_progress: bool = True,
         clear: bool = False,
+        automatic: bool = False,
     ) -> dict[str, Any]:
         """Maintain memory using one guarded lifecycle for single and batch operations."""
         if enabled is not None and not isinstance(enabled, bool):
@@ -4931,7 +4975,21 @@ class AccountService:
                             return outcome
                         generation = self._credential_generation(token, current)
                         previous_operation = str(current.get("memory_operation_id") or "")
-                        self._accounts[token] = {**current, "memory_operation_id": operation_id}
+                        if float(current.get("memory_operation_active_until") or 0) > time.time():
+                            outcome.update(status="skipped", message="该账号已有记忆操作正在执行")
+                            return outcome
+                        target_enabled = enabled
+                        if enabled is None and current.get("memory_operation_status") == "pending":
+                            previous_target = current.get("memory_operation_target")
+                            target_enabled = previous_target if isinstance(previous_target, bool) else None
+                        prefix = "memory_clear" if clear else "memory_operation"
+                        self._accounts[token] = {
+                            **current, "memory_operation_id": operation_id,
+                            "memory_operation_active_until": time.time() + 60,
+                            f"{prefix}_status": "pending", f"{prefix}_at": datetime.now(timezone.utc).isoformat(),
+                            **({"memory_operation_target": target_enabled} if not clear else {}),
+                            **({"memory_maintenance_attempts": 0, "memory_maintenance_attempt_at": None} if not automatic else {}),
+                        }
                         claimed = self._save_accounts(
                             expected_credential_generation=generation,
                             expected_memory_operation=(token, previous_operation),
@@ -5003,11 +5061,12 @@ class AccountService:
                                     if cleared is False else "清空请求已接受，无法确认记忆是否为空，待验证"
                                 )
                         elif observed is None:
-                            status = "pending" if accepted else "failed"
+                            status = "pending" if accepted or target_enabled is not None else "failed"
                             message = "修改请求已接受，上游未返回记忆状态，待验证" if accepted else "上游未返回记忆状态"
                         else:
-                            if enabled is not None and observed != enabled:
-                                status, message = "failed", "上游确认的记忆状态与目标不一致"
+                            if target_enabled is not None and observed != target_enabled:
+                                status = "failed" if enabled is not None else "pending"
+                                message = "上游确认的记忆状态与目标不一致"
                             elif enabled is not None:
                                 message = "记忆已确认开启" if observed else "记忆已确认关闭"
                     except RefreshCredentialsChangedError:
@@ -5035,6 +5094,7 @@ class AccountService:
                         field_prefix = "memory_clear" if clear else "memory_operation"
                         next_item = {
                             **current,
+                            "memory_operation_active_until": 0,
                             f"{field_prefix}_status": status,
                             f"{field_prefix}_error": "" if status == "verified" else message[:500],
                             f"{field_prefix}_at": operation_at,
@@ -5055,6 +5115,11 @@ class AccountService:
                         if observed is not None:
                             next_item["memory_enabled"] = observed
                             next_item["memory_checked_at"] = checked_at
+                        policy = current.get("memory_import_policy")
+                        if not clear and status == "verified" and (
+                            policy == "refresh" or (policy == "disable" and observed is False)
+                        ):
+                            next_item.pop("memory_import_policy", None)
                         self._accounts[token] = next_item
                         saved = self._save_accounts(
                             expected_credential_generation=generation,

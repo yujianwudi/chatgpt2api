@@ -74,6 +74,7 @@ _MANAGED_TOP_LEVEL_FIELDS = (
     "gif_models",
     "auto_remove_invalid_accounts",
     "auto_remove_rate_limited_accounts",
+    "account_import_memory_policy",
     "log_levels",
     "global_system_prompt",
     "sensitive_words",
@@ -266,6 +267,7 @@ _FIELD_SPECS: dict[str, dict[str, Any]] = {
     "gif_models": _field_metadata(DEFAULT_GIF_MODELS, options=tuple(sorted(PUBLIC_IMAGE_MODELS))),
     "auto_remove_invalid_accounts": _field_metadata(True),
     "auto_remove_rate_limited_accounts": _field_metadata(False),
+    "account_import_memory_policy": _field_metadata("preserve", options=("preserve", "refresh", "disable")),
     "log_levels": _field_metadata([], options=("debug", "info", "warning", "error")),
     "global_system_prompt": _field_metadata(""),
     "sensitive_words": _field_metadata([]),
@@ -565,6 +567,9 @@ class SettingsManagementService:
             ),
             gif_models=gif_models,
             auto_remove_invalid_accounts=_bool(effective.get("auto_remove_invalid_accounts"), True),
+            account_import_memory_policy=_enum(
+                effective.get("account_import_memory_policy"), "preserve", {"preserve", "refresh", "disable"},
+            ),
             auto_remove_rate_limited_accounts=_bool(
                 effective.get("auto_remove_rate_limited_accounts"),
                 False,

@@ -43,6 +43,11 @@ export const settingsTabs: SettingsSelectOption[] = [
 ]
 
 const settingsOptionLabels: Record<string, Record<string, string>> = {
+  account_import_memory_policy: {
+    preserve: '保持原样',
+    refresh: '仅查询记忆状态',
+    disable: '关闭记忆并验证',
+  },
   image_upscale_fit: {
     contain: '等比留边 · 保留完整画面',
     cover: '等比裁切 · 居中铺满',

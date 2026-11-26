@@ -88,6 +88,7 @@ export interface Settings {
   gif_models: string[]
   auto_remove_invalid_accounts: boolean
   auto_remove_rate_limited_accounts: boolean
+  account_import_memory_policy: 'preserve' | 'refresh' | 'disable'
   log_levels: string[]
   global_system_prompt: string
   sensitive_words: string[]
