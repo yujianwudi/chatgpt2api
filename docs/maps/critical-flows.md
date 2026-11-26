@@ -43,6 +43,18 @@ sequenceDiagram
 sources finish through `RemoteAccountImportJob.finish`; source adapters do not
 implement a second save lifecycle. The UI owns polling and presentation only.
 
+## Account lifecycle maintenance
+
+Account lifecycle maintenance runs at the configured account refresh interval.
+`AccountService.run_account_maintenance` isolates authentication verification,
+token renewal and quota synchronization failures. Each quota cycle selects at
+most 200 accounts, oldest first: normal accounts become due after 30 minutes;
+limited accounts wait for their known restore time and the configured retry
+interval. Recent attempts, active image accounts, disabled accounts and
+unrecoverable credentials are excluded. Larger pools may take multiple cycles.
+Browser credential import retains its existing save-then-sync flow; explicit
+`sync_after_import=false` still permits saving credentials without a full sync.
+
 ## Upstream Account memory maintenance
 
 The Accounts runtime sends an explicit or scoped selection and an enable,

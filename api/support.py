@@ -76,31 +76,10 @@ def start_account_lifecycle_watcher(stop_event: Event) -> Thread:
     def worker() -> None:
         while not stop_event.is_set():
             try:
-                pending_auth = account_service.list_pending_auth_verification_tokens()
-                if pending_auth:
-                    account_service.resume_pending_auth_verifications()
-                expiring_tokens = account_service.list_expiring_access_tokens()
-                if expiring_tokens:
-                    print(
-                        "[account-watcher] renewing "
-                        f"{len(expiring_tokens)} expiring access tokens"
-                    )
-                    result = account_service.renew_expiring_access_tokens(expiring_tokens)
-                    if result.get("errors"):
-                        print(f"[account-watcher] renewal errors: {result['errors']}")
-
-                limited_tokens = account_service.list_limited_tokens()
-                normal_tokens = account_service.list_normal_tokens()
-                if limited_tokens:
-                    print(
-                        "[account-watcher] syncing "
-                        f"{len(limited_tokens)} limited accounts "
-                        f"(skipping {len(normal_tokens)} healthy accounts, "
-                        f"recovering {len(pending_auth)} pending auth accounts)"
-                    )
-                    account_service.sync_accounts_and_quota(limited_tokens)
-            except Exception as exc:
-                print(f"[account-watcher] fail {exc}")
+                result = account_service.run_account_maintenance()
+                print(f"[account-watcher] {result}")
+            except Exception:
+                print("[account-watcher] maintenance failed")
             stop_event.wait(config.refresh_account_interval_minute * 60)
 
     thread = Thread(target=worker, name="account-lifecycle-watcher", daemon=True)

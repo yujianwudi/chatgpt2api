@@ -110,6 +110,8 @@ class AccountService:
     _ACCESS_TOKEN_REFRESH_SKEW_SECONDS = ACCESS_TOKEN_REFRESH_SKEW_SECONDS
     _TOKEN_REFRESH_ERROR_BACKOFF_SECONDS = 5 * 60
     _POOL_HEALTH_REFRESH_BATCH_SIZE = 10
+    _MAINTENANCE_SYNC_BATCH_SIZE = 200
+    _NORMAL_QUOTA_FRESHNESS_SECONDS = 30 * 60
     _IMAGE_FAILURE_REFRESH_DEDUP_SECONDS = 30
     _ACCESS_TOKEN_FINGERPRINT_LIMIT = 8
     _REFRESH_PROGRESS_COMPLETED_TTL_SECONDS = 10 * 60
@@ -154,6 +156,7 @@ class AccountService:
         self._oauth_refresh_flights_lock = Lock()
         self._oauth_refresh_flights: dict[_CredentialGeneration, Future[str]] = {}
         self._memory_active_account_ids: set[str] = set()
+        self._maintenance_lock = Lock()
         self._image_slot_condition = Condition(self._lock)
         self._account_snapshot_refresh_lock = Lock()
         self._index = 0
@@ -2408,6 +2411,71 @@ class AccountService:
                    and item.get("last_remote_check_result") != "pending"
                    and (token := item.get("access_token") or "")
             ]
+
+    def list_due_account_sync_tokens(self, *, now: datetime | None = None) -> list[str]:
+        """Select a bounded, oldest-first quota batch without querying upstream."""
+        self._refresh_accounts_snapshot_if_stale()
+        now = now or datetime.now(timezone.utc)
+        retry_seconds = max(60, int(config.refresh_account_interval_minute) * 60)
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+        with self._lock:
+            due: list[tuple[datetime, str]] = []
+            for token, account in self._accounts.items():
+                if not self._is_account_selectable(account, allow_limited=True):
+                    continue
+                if account.get("last_remote_check_result") == "pending" or self._image_inflight.get(token, 0):
+                    continue
+                attempted = self._parse_time(account.get("last_remote_check_attempt_at"))
+                checked = self._parse_time(account.get("last_remote_checked_at"))
+                if attempted and (now - attempted).total_seconds() < retry_seconds:
+                    continue
+                if account.get("status") == "限流":
+                    restore_at = self._parse_time(account.get("restore_at"))
+                    if restore_at and restore_at > now:
+                        continue
+                    freshness = retry_seconds
+                else:
+                    freshness = self._NORMAL_QUOTA_FRESHNESS_SECONDS
+                if checked and (now - checked).total_seconds() < freshness:
+                    continue
+                due.append((max(attempted or oldest, checked or oldest), token))
+            due.sort()
+            return [token for _, token in due[:self._MAINTENANCE_SYNC_BATCH_SIZE]]
+
+    def run_account_maintenance(self) -> dict[str, Any]:
+        """Run independent maintenance stages using the shared account limiter."""
+        if not self._maintenance_lock.acquire(blocking=False):
+            return {"skipped": True}
+        summary: dict[str, Any] = {"errors": [], "synced": 0, "renewed": 0}
+
+        def stage(name: str, operation: Callable[[], Any]) -> Any:
+            try:
+                return operation()
+            except Exception:
+                # Account diagnostics may contain credentials. Emit stage names only.
+                summary["errors"].append(name)
+                return None
+
+        try:
+            stage("auth_verification", self.resume_pending_auth_verifications)
+            expiring = stage("renewal_selection", self.list_expiring_access_tokens) or []
+            if expiring:
+                result = stage("renewal", lambda: self.renew_expiring_access_tokens(expiring))
+                if result:
+                    summary["renewed"] = len(result.get("updated_ids") or [])
+                    if result.get("errors"):
+                        summary["errors"].append("renewal_accounts")
+            tokens = stage("quota_selection", self.list_due_account_sync_tokens) or []
+            summary["sync_selected"] = len(tokens)
+            if tokens:
+                result = stage("quota_sync", lambda: self.sync_accounts_and_quota(tokens))
+                if result:
+                    summary["synced"] = int(result.get("synced") or 0)
+                    if result.get("errors"):
+                        summary["errors"].append("quota_accounts")
+            return summary
+        finally:
+            self._maintenance_lock.release()
 
     @classmethod
     def _pool_health_freshness_seconds(cls, freshness_seconds: int | float | None = None) -> int:
