@@ -8,7 +8,7 @@
               v-model="settings.auto_remove_invalid_accounts"
               :disabled="fieldReadOnly('auto_remove_invalid_accounts')"
             >自动移除异常账号</Checkbox>
-            <HelpTip text="确认鉴权无效的账号会进入异常处理；开启后直接移除，关闭后保留异常状态。" />
+            <HelpTip text="后台会清理已过期且无法续期、或确认鉴权无效的账号。可续期、手动禁用和待核验账号保留；关闭时仍会从生图调度中排除不可用凭据。" />
           </div>
         </div>
         <div class="settings-check-item">

@@ -729,6 +729,7 @@ class AccountService:
         *,
         expected_credential_generation: _CredentialGeneration | None = None,
         expected_memory_operation: tuple[str, str] | None = None,
+        expected_cleanup_accounts: dict[str, dict] | None = None,
         conflict_existing_tokens: set[str] | None = None,
     ) -> bool:
         last_conflict: StorageRevisionConflictError | None = None
@@ -790,6 +791,16 @@ class AccountService:
                                 revision=snapshot.revision,
                             )
                             return False
+                    if expected_cleanup_accounts is not None and any(
+                        remote.get(token) != account
+                        for token, account in expected_cleanup_accounts.items()
+                    ):
+                        # Automatic cleanup is conditional, unlike explicit deletion.
+                        # A concurrent credential/status update wins over this scan.
+                        self._apply_account_view_locked(
+                            remote, persisted_accounts=remote, revision=snapshot.revision,
+                        )
+                        return False
                     merged = self._merge_accounts_after_conflict(
                         self._persisted_accounts,
                         self._accounts,
@@ -2315,20 +2326,28 @@ class AccountService:
         remove_invalid: bool,
         remove_rate_limited: bool,
     ) -> tuple[list[str], list[str]]:
-        invalid_tokens = [
-            token
-            for item in self._accounts.values()
-            if remove_invalid
-               and item.get("status") == "异常"
-               and (token := item.get("access_token") or "")
-        ]
-        rate_limited_tokens = [
-            token
-            for item in self._accounts.values()
-            if remove_rate_limited
-               and item.get("status") == "限流"
-               and (token := item.get("access_token") or "")
-        ]
+        invalid_tokens: list[str] = []
+        rate_limited_tokens: list[str] = []
+        for token, item in self._accounts.items():
+            if (
+                item.get("status") == "禁用"
+                or item.get("last_remote_check_result") == "pending"
+                or item.get("management_id") in self._memory_active_account_ids
+            ):
+                continue
+            availability = project_upstream_credential_availability(
+                token, str(item.get("refresh_token") or ""),
+                access_confirmed_invalid=item.get("last_remote_check_result") == "invalid",
+                refresh_confirmed_invalid=bool(item.get("refresh_token_invalid_at")),
+            )
+            if availability.status == "recoverable":
+                continue
+            if remove_invalid and (
+                item.get("status") == "异常" or availability.status == "unavailable"
+            ):
+                invalid_tokens.append(token)
+            elif remove_rate_limited and item.get("status") == "限流":
+                rate_limited_tokens.append(token)
         return invalid_tokens, rate_limited_tokens
 
     def preview_auto_remove_accounts(
@@ -2360,6 +2379,7 @@ class AccountService:
             "auto_remove_rate_limited_accounts": remove_rate_limited,
         }
 
+    @account_processing_batch
     def cleanup_auto_remove_accounts(
         self,
         *,
@@ -2378,13 +2398,16 @@ class AccountService:
                 remove_invalid=remove_invalid,
                 remove_rate_limited=remove_rate_limited,
             )
-
-        target_tokens = list(dict.fromkeys([*invalid_tokens, *rate_limited_tokens]))
-        result = self.delete_accounts(target_tokens, return_items=False) if target_tokens else {"removed": 0}
-        removed = int(result.get("removed") or 0)
+            target_tokens = set(invalid_tokens + rate_limited_tokens)
+            expected = {token: deepcopy(self._accounts[token]) for token in target_tokens}
+            for token in target_tokens:
+                self._accounts.pop(token, None)
+            saved = self._save_accounts(expected_cleanup_accounts=expected) if target_tokens else True
+            removed = len(target_tokens) if saved else 0
+            if removed:
+                self._remove_account_runtime_state_locked(target_tokens)
         if removed:
-            log_service.add(
-                LOG_TYPE_ACCOUNT,
+            self._add_account_log_best_effort(
                 "按账号自动移除策略清理账号",
                 {
                     "removed": removed,
@@ -2465,6 +2488,8 @@ class AccountService:
                     summary["renewed"] = len(result.get("updated_ids") or [])
                     if result.get("errors"):
                         summary["errors"].append("renewal_accounts")
+            cleanup = stage("cleanup", self.cleanup_auto_remove_accounts)
+            summary["removed"] = int((cleanup or {}).get("total_removed") or 0)
             tokens = stage("quota_selection", self.list_due_account_sync_tokens) or []
             summary["sync_selected"] = len(tokens)
             if tokens:

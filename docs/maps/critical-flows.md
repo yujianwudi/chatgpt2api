@@ -54,6 +54,12 @@ interval. Recent attempts, active image accounts, disabled accounts and
 unrecoverable credentials are excluded. Larger pools may take multiple cycles.
 Browser credential import retains its existing save-then-sync flow; explicit
 `sync_after_import=false` still permits saving credentials without a full sync.
+After renewal, the same cleanup predicate serves scheduled maintenance and
+manual preview/run. Unrecoverable expired credentials follow the invalid-account
+cleanup setting; disabled, pending-auth and recoverable accounts are retained.
+Automatic deletion compares account snapshots across storage revision retries,
+so a newer credential or status prevents deletion. Unknown expiry alone is not
+a deletion reason. Rate-limited deletion remains an explicit existing setting.
 
 ## Upstream Account memory maintenance
 
