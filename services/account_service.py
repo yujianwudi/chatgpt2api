@@ -158,6 +158,7 @@ class AccountService:
         self._memory_active_account_ids: set[str] = set()
         self._maintenance_lock = Lock()
         self._maintenance_summary: dict[str, Any] = {}
+        self._memory_operation_repository: Any = None
         self._image_slot_condition = Condition(self._lock)
         self._account_snapshot_refresh_lock = Lock()
         self._index = 0
@@ -4660,6 +4661,9 @@ class AccountService:
 
     def get_refresh_progress(self, progress_id: str) -> dict | None:
         """查询刷新进度。"""
+        durable = self._memory_jobs().get(progress_id)
+        if durable is not None:
+            return self._memory_job_progress(durable)
         now = time.monotonic()
         with self._refresh_progress_lock:
             self._prune_refresh_progress_locked(now, target_id=progress_id)
@@ -4882,8 +4886,98 @@ class AccountService:
             event="renew_expiring_access_tokens",
         )
 
+    def _memory_jobs(self):
+        if self._memory_operation_repository is None:
+            from services.storage.memory_operation_repository import MemoryOperationRepository
+            self._memory_operation_repository = MemoryOperationRepository(getattr(self.storage, "database_url", None))
+        return self._memory_operation_repository
+
+    def register_memory_operation(self, progress_id: str, action: str, target_ids: list[str], missing_ids: list[str]) -> None:
+        self._memory_jobs().create(progress_id, action, target_ids, missing_ids)
+        self._refresh_accounts_snapshot_if_stale()
+        with self._lock:
+            selected = set(target_ids)
+            for token, account in self._accounts.items():
+                if account.get("management_id") in selected:
+                    next_item = {
+                        **account, "memory_operation_job_id": progress_id,
+                        "memory_maintenance_attempts": 0, "memory_maintenance_attempt_at": None,
+                    }
+                    next_item.pop("memory_import_policy", None)
+                    self._accounts[token] = next_item
+            self._save_accounts()
+
+    @staticmethod
+    def _memory_job_progress(job: dict[str, Any]) -> dict[str, Any]:
+        outcomes = job["outcomes"]
+        ids = job["target_ids"]
+        finished = {aid: entry for aid, entry in outcomes.items() if entry["status"] not in {"running", "queued"}}
+        counts = {key: sum(e["status"] == key for e in finished.values()) for key in ("confirmed", "pending", "skipped")}
+        errors = [{"id": aid, "error": entry["message"]} for aid, entry in finished.items() if entry["status"] == "failed"]
+        events = [{"sequence": int(entry.get("sequence") or i + 1), "account_id": aid, "account_label": aid,
+                   "action": job["action"], "status": {"confirmed": "success", "pending": "info"}.get(entry["status"], entry["status"]),
+                   "message": entry["message"]} for i, (aid, entry) in enumerate(finished.items())]
+        done = len(finished) == len(ids)
+        return {"total": len(ids), "processed": len(finished), "done": done,
+                "error": None, "stage": "completed" if done else "running", "stage_label": "",
+                "events": events[-ACCOUNT_OPERATION_EVENT_LIMIT:],
+                "result": {**counts, "errors": errors, "events": events[-ACCOUNT_OPERATION_EVENT_LIMIT:],
+                           "updated_ids": [aid for aid, e in finished.items() if e["status"] in {"confirmed", "pending"}],
+                           "removed_ids": [], "items": []} if done else None}
+
+    def _recover_memory_jobs(self) -> dict[str, int]:
+        result = {"confirmed": 0, "pending": 0, "failed": 0, "selected": 0}
+        remaining = 20
+        for job in self._memory_jobs().pending():
+            groups: dict[tuple[bool | None, bool], list[str]] = {}
+            for aid in job["target_ids"]:
+                state = job["outcomes"].get(aid, {}).get("status", "queued")
+                if state not in {"queued", "running", "pending"}:
+                    continue
+                account = self.get_account_by_id(aid)
+                if account is None:
+                    self._memory_jobs().record(job["id"], aid, "skipped", "账号已删除")
+                    continue
+                if account.get("memory_operation_job_id") != job["id"]:
+                    self._memory_jobs().record(job["id"], aid, "skipped", "已由更新的记忆任务替代")
+                    continue
+                if remaining <= 0:
+                    break
+                now = datetime.now(timezone.utc)
+                if float(account.get("memory_operation_active_until") or 0) > now.timestamp():
+                    continue
+                if not self._is_account_selectable(account, allow_limited=True):
+                    continue
+                attempted = self._parse_time(account.get("memory_maintenance_attempt_at"))
+                if int(account.get("memory_maintenance_attempts") or 0) >= 3 or (
+                    attempted and (now - attempted).total_seconds() < max(60, config.refresh_account_interval_minute * 60)
+                ):
+                    continue
+                self.update_account(str(account["access_token"]), {
+                    "memory_maintenance_attempt_at": now.isoformat(),
+                    "memory_maintenance_attempts": int(account.get("memory_maintenance_attempts") or 0) + 1,
+                }, quiet=True)
+                queued = state == "queued"
+                action = job["action"]
+                target = {"enable_memory": True, "disable_memory": False}.get(action) if queued else None
+                groups.setdefault((target, queued and action == "clear_memory"), []).append(aid)
+                remaining -= 1
+                result["selected"] += 1
+            for (target, clear), ids in groups.items():
+                batch = self.manage_account_memory(
+                    ids, enabled=target, clear=clear, progress_id=job["id"],
+                    finalize_progress=False, automatic=True,
+                )
+                for key in ("confirmed", "pending"):
+                    result[key] += int(batch.get(key) or 0)
+                result["failed"] += len(batch.get("errors") or [])
+            if remaining <= 0:
+                return result
+        return result
+
     def maintain_pending_account_memory(self) -> dict[str, Any]:
         """Apply opted-in import policies and verify accepted operations, boundedly."""
+        recovered = self._recover_memory_jobs()
         self._refresh_accounts_snapshot_if_stale()
         now = datetime.now(timezone.utc)
         groups: dict[bool | None, list[str]] = {None: [], False: []}
@@ -4904,7 +4998,7 @@ class AccountService:
                 if attempted and (now - attempted).total_seconds() < max(60, config.refresh_account_interval_minute * 60):
                     continue
                 due.append((attempted or datetime.min.replace(tzinfo=timezone.utc), token, account["management_id"], None if pending or policy == "refresh" else False))
-            for _, token, account_id, target in sorted(due)[:20]:
+            for _, token, account_id, target in sorted(due)[:max(0, 20 - recovered["selected"])]:
                 self._accounts[token] = {
                     **self._accounts[token], "memory_maintenance_attempt_at": now.isoformat(),
                     "memory_maintenance_attempts": int(self._accounts[token].get("memory_maintenance_attempts") or 0) + 1,
@@ -4912,7 +5006,7 @@ class AccountService:
                 groups[target].append(account_id)
             if any(groups.values()):
                 self._save_accounts()
-        result = {"confirmed": 0, "pending": 0, "failed": 0}
+        result = recovered
         for target, ids in groups.items():
             if ids:
                 batch = self.manage_account_memory(ids, enabled=target, automatic=True)
@@ -4946,6 +5040,7 @@ class AccountService:
             "confirmed": 0, "pending": 0, "skipped": 0,
             "updated_ids": [], "removed_ids": [], "errors": [],
         }
+        durable_job = self._memory_jobs().get(progress_id) if progress_id else None
         if progress_id and self.get_refresh_progress(progress_id) is None:
             self.init_refresh_progress(progress_id, len(target_ids))
         if progress_id:
@@ -4977,12 +5072,17 @@ class AccountService:
                         if current is None or current.get("management_id") != account_id:
                             outcome.update(status="skipped", message="账号或凭据已变更，请重新操作")
                             return outcome
+                        if durable_job and current.get("memory_operation_job_id") != progress_id:
+                            outcome.update(status="skipped", message="已由更新的记忆任务替代")
+                            return outcome
                         generation = self._credential_generation(token, current)
                         previous_operation = str(current.get("memory_operation_id") or "")
                         if float(current.get("memory_operation_active_until") or 0) > time.time():
                             outcome.update(status="skipped", message="该账号已有记忆操作正在执行")
                             return outcome
                         target_enabled = enabled
+                        if durable_job and enabled is None:
+                            target_enabled = {"enable_memory": True, "disable_memory": False}.get(durable_job["action"])
                         if enabled is None and current.get("memory_operation_status") == "pending":
                             previous_target = current.get("memory_operation_target")
                             target_enabled = previous_target if isinstance(previous_target, bool) else None
@@ -5001,6 +5101,8 @@ class AccountService:
                     if not claimed:
                         outcome.update(status="skipped", message="账号或记忆操作已变更，请重新操作")
                         return outcome
+                    if durable_job:
+                        self._memory_jobs().record(progress_id, account_id, "running", "正在处理记忆操作")
 
                     observed: bool | None = None
                     cleared: bool | None = None
@@ -5033,7 +5135,10 @@ class AccountService:
                         auth = auth if isinstance(auth, dict) else {}
                         upstream_id = str(account.get("account_id") or auth.get("chatgpt_account_id") or "").strip()
                         verify_pending_clear = (
-                            not clear and enabled is None and account.get("memory_clear_status") == "pending"
+                            not clear and enabled is None and (
+                                account.get("memory_clear_status") == "pending"
+                                or (durable_job and durable_job["action"] == "clear_memory")
+                            )
                         )
                         with OpenAIBackendAPI(token) as backend:
                             if clear:
@@ -5079,7 +5184,7 @@ class AccountService:
                     except MemoryStateInvalidError:
                         status, message = ("pending" if clear and accepted else "failed"), "上游记忆状态格式无效"
                     except Exception as exc:
-                        status = "pending" if accepted else "failed"
+                        status = "pending" if accepted or target_enabled is not None or verify_pending_clear else "failed"
                         detail = self._credential_error_text(exc, account, access_token=token)
                         prefix = "清空请求已接受，结果验证失败，待验证：" if clear else "修改请求已接受，状态验证失败，待验证："
                         message = (prefix if accepted else "记忆操作失败：") + detail
@@ -5157,6 +5262,8 @@ class AccountService:
                 outcome = future.result()
                 status = outcome["status"]
                 account = outcome["account"]
+                if durable_job:
+                    self._memory_jobs().record(progress_id, account_id, status, outcome["message"])
                 if status in {"confirmed", "pending", "skipped"}:
                     result[status] += 1
                 else:

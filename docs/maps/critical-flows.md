@@ -113,9 +113,15 @@ verification of both switch values, the clearing request and the
 
 The switch snapshot feeds the shared account filter; clear history is shown
 only in memory details.
-Vue polls the generic operation endpoint
-and renders backend-produced events and counters. Process restart loses the
-existing in-memory progress and does not replay upstream changes.
+Vue polls the generic operation endpoint and renders backend-produced events
+and counters. Administrator memory jobs persist their frozen target IDs,
+action and per-account outcomes in `MemoryOperationRepository` for seven days.
+Outcome rows allow concurrent workers to finish without rewriting the entire
+batch; event sequences are allocated atomically. After restart the same progress
+ID remains queryable. Queued commands can execute once; started or accepted
+commands recover through reads, including clear verification without another
+DELETE. A newer job on an account supersedes an older queued intent. Deleted
+accounts settle as skipped. Other account-operation progress remains in memory.
 
 ## Studio Image Task
 

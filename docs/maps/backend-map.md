@@ -134,10 +134,11 @@ the upstream `m3m` and saved-memory clearing protocols and verification.
 `account_view` independently projects the switch snapshot, clear record and
 allowed actions; `account_operation_events` distinguishes confirmed,
 pending verification and failed results. Metadata remains in the Account
-Repository without storing memory contents; progress retains the existing
-process-memory lifecycle. Account-local mutual exclusion applies within one
-process, while credential and operation compare-and-swap guards reject stale
-metadata writes. It does not serialize upstream calls across processes.
+Repository without storing memory contents. Administrator job scopes and results
+are owned by `MemoryOperationRepository` in the Application Database, retained
+for seven days. Account metadata contains execution leases and operation IDs;
+credential and operation compare-and-swap guards reject stale claims and writes.
+Recovery executes queued commands but only verifies already-started commands.
 See [critical-flows.md](critical-flows.md#upstream-account-memory-maintenance)
 for verification and protocol evidence.
 
@@ -146,6 +147,7 @@ for verification and protocol evidence.
 | Domain | Owning Module | Stable Interface/output | Persistence |
 | --- | --- | --- | --- |
 | Upstream Accounts and User Keys | `AccountService`, `AuthService` | Account/auth projections and batch action results | Account Repository through `DatabaseStorageBackend` |
+| Memory Operations | `AccountService` | Frozen target scopes, progress and bounded recovery | `MemoryOperationRepository`, job and outcome tables in the Application Database |
 | Settings and policy | `SettingsManagementService`, runtime configuration | Effective settings projection and mutation result | `SystemSettingsRepository` |
 | Proxy routing | `ProxyManagementService`, `ProxyService` | Proxy References, groups, tests, and runtime view | `ProxyConfigurationRepository` |
 | Call Records | `LoggedCall`, `CallRecordService` | Call summary/detail projections | `CallRecordRepository` |

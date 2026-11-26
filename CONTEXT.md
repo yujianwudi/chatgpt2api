@@ -31,6 +31,13 @@ new memories may be saved after a successful clear. AccountService stores only
 the outcome metadata, never the upstream memory contents, in the Account Repository.
 _Avoid_: Current empty memory, disabling memory, deleting local Studio history
 
+**Memory Operation**:
+An administrator-requested, frozen set of account management IDs and a memory
+action, with durable per-account outcomes. AccountService owns execution and
+recovery; MemoryOperationRepository stores scopes and outcomes for seven days
+in the Application Database. It never stores credentials or memory contents.
+Started clear commands recover by verification only, never by repeating deletion.
+
 **Account Processing Concurrency**:
 The process-wide capacity limit shared by Upstream Account batch tasks. Remote maintenance, including AT renewal, account and quota synchronization, import verification, and background checks, consumes one slot per active account. A local atomic batch mutation, including import save, enable, disable, reset, delete, and group binding, consumes one slot for the complete batch.
 _Avoid_: Image generation concurrency, import batch size

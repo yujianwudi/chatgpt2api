@@ -1762,6 +1762,9 @@ def create_router() -> APIRouter:
             proxy_values,
         ) = _selected_refresh_context(targets)
         action = f"{body.action}_memory"
+        await run_in_threadpool(
+            account_service.register_memory_operation, progress_id, action, target_ids, missing_ids,
+        )
         _init_account_mutation_progress(
             progress_id,
             total=len(target_ids) + len(missing_ids),

@@ -45,6 +45,7 @@ backend business meaning from raw fields or error text.
 | State | Current store | Owner |
 | --- | --- | --- |
 | Upstream Accounts and User Keys | Application Database | Account Repository through `DatabaseStorageBackend` |
+| Memory Operation scopes and per-account outcomes | Application Database, seven-day retention | `AccountService` through `MemoryOperationRepository` |
 | Settings, Proxy Groups, Account Groups, remote-import configuration, Call Records, dashboard aggregates, Prompt Library snapshots, coordination state, and Editable File Tasks | Separate repositories in the Application Database | Their domain services and repository interfaces |
 | Image Tasks | `data/image_tasks.json` | `ImageTaskService` |
 | Image Assets and gallery catalogue | Local files and optional WebDAV plus `data/image_index.json` | `ImageStorageService` |

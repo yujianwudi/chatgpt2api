@@ -92,8 +92,11 @@ an accepted update with unavailable verification is pending; an opposite value
 is a failure with the observed snapshot retained. Failed reads preserve prior
 confirmed values and times. Events must not expose tokens or raw settings.
 
-Progress uses existing process-memory retention and is lost on restart; this
-feature does not add durable job recovery or automatic replay.
+Administrator memory job scopes and per-account outcomes now use
+`MemoryOperationRepository` in the Application Database with seven-day retention.
+After restart, queued work can continue and started work is verified read-only;
+clearing is never automatically replayed. Other account-operation progress keeps
+its existing process-memory lifecycle.
 Clearing and switch maintenance share the same per-account exclusion and
 credential/operation compare-and-swap guards. A clear command is never
 automatically retried. An accepted command is confirmed only after an
