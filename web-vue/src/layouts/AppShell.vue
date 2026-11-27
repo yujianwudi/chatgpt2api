@@ -38,17 +38,10 @@
               href="https://github.com/yukkcat/chatgpt2api"
               target="_blank"
               rel="noopener noreferrer"
-              class="shell-sidebar-brand shrink-0 text-foreground transition-colors hover:text-primary"
-              aria-label="GitHub"
+              class="shell-sidebar-brand shrink-0 transition-opacity hover:opacity-80"
+              aria-label="ChatGPT2API GitHub 仓库"
             >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                class="h-6 w-6"
-                fill="currentColor"
-              >
-                <path d="M12 2C6.477 2 2 6.477 2 12c0 4.419 2.865 8.166 6.839 9.489.5.09.682-.217.682-.483 0-.237-.009-.868-.014-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.004.071 1.532 1.031 1.532 1.031.892 1.529 2.341 1.087 2.91.832.091-.647.349-1.087.636-1.337-2.22-.253-4.555-1.11-4.555-4.944 0-1.092.39-1.987 1.029-2.687-.103-.253-.446-1.272.098-2.65 0 0 .84-.269 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.748-1.026 2.748-1.026.546 1.378.202 2.397.1 2.65.64.7 1.028 1.595 1.028 2.687 0 3.842-2.338 4.687-4.566 4.936.359.309.678.919.678 1.852 0 1.337-.012 2.418-.012 2.747 0 .268.18.577.688.479A10.002 10.002 0 0 0 22 12c0-5.523-4.477-10-10-10z" />
-              </svg>
+              <img :src="sidebarLogo" alt="" width="24" height="24" class="h-6 w-6" />
             </a>
             <div class="sidebar-label sidebar-brand-label">
               <p class="ui-section-title">ChatGPT2API</p>
@@ -684,6 +677,7 @@
 import { Icon } from '@iconify/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import sidebarLogo from './chatgpt2api-logo.png'
 import {
   PUBLIC_SETTINGS_CHANGED_EVENT,
 } from '@/api/settings'
